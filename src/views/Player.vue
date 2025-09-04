@@ -65,7 +65,7 @@
                 <el-option 
                   v-for="m in availableModels" 
                   :key="m" 
-                  :label="m" 
+                  :label="getModelLabel(m)" 
                   :value="m"
                 />
               </el-select>
@@ -553,6 +553,12 @@ export default {
       selectedWeights.value = ''
     }
 
+    // 获取模型标签
+    const getModelLabel = (modelPath) => {
+      const filename = modelPath.split('/').pop()
+      return filename.replace('.dat', '').replace('.pth', '')
+    }
+
     // 页面加载时自动列举可用模型
     ;(async () => {
       try {
@@ -589,6 +595,7 @@ export default {
       onGameChange,
       handleKeyDown,
       handleKeyUp,
+      getModelLabel,
       logout
     }
   }
