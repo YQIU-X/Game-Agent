@@ -19,7 +19,10 @@ game-agent-platform/
 │   │   └── player_control.py    # 玩家控制脚本
 │   ├── 📁 wrappers/             # 环境包装器
 │   │   ├── base_wrapper.py      # 基础包装器类
-│   │   ├── mario_wrappers.py    # Mario游戏包装器
+│   │   ├── mario_wrappers.py    # Mario
+
+
+戏包装器
 │   │   └── atari_wrappers.py    # Atari游戏包装器
 │   ├── 📁 utils/                # 工具模块
 │   │   ├── model_factory.py     # 模型工厂

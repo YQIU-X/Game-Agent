@@ -6,6 +6,13 @@ export const listConfigsApi = () => api.get('/api/configs')
 export const readConfigApi = (filename) => api.get(`/api/configs/${encodeURIComponent(filename)}`)
 export const saveConfigApi = (filename, data) => api.post(`/api/configs/${encodeURIComponent(filename)}`, data)
 
+// 训练相关API
+export const startTrainingApi = (payload) => api.post('/api/training/start', payload)
+export const fetchTrainingLogsApi = (processId) => api.get(`/api/training/logs/${encodeURIComponent(processId)}`)
+export const stopTrainingApi = (processId) => api.post(`/api/training/stop/${encodeURIComponent(processId)}`)
+export const getTrainingConfigsApi = () => api.get('/api/training/configs')
+
+// 旧的API（保持兼容性）
 export const startTrainApi = (payload) => api.post('/api/train', payload)
 export const fetchLogsApi = (processId) => api.get(`/api/logs/${encodeURIComponent(processId)}`)
 export const stopProcessApi = (processId) => api.post(`/api/stop/${encodeURIComponent(processId)}`)

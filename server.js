@@ -477,6 +477,689 @@ app.post('/api/start-stream', (req, res) => {
   res.json({ success: true, processId });
 });
 
+// 启动通用训练
+app.post('/api/start-training', (req, res) => {
+  const { 
+    algorithm = 'DQN',
+    game = 'mario',
+    environment = 'SuperMarioBros-1-1-v0',
+    action_space = 'complex',
+    episodes = 1000,
+    ...algorithmParams
+  } = req.body;
+
+  const processId = Date.now().toString();
+  
+  // 根据算法选择对应的训练脚本
+  const algorithmScripts = {
+    'DQN': 'python/scripts/train_dqn.py',
+    'PPO': 'python/scripts/train_ppo.py',
+    'A2C': 'python/scripts/train_a2c.py'
+  };
+  
+  const scriptPath = algorithmScripts[algorithm];
+  if (!scriptPath) {
+    return res.status(400).json({ 
+      success: false, 
+      message: `不支持的算法: ${algorithm}` 
+    });
+  }
+  
+  // 构建训练命令参数
+  const args = [
+    path.join(__dirname, scriptPath),
+    '--environment', environment,
+    '--action-space', action_space,
+    '--episodes', String(episodes)
+  ];
+
+  // 参数名映射：将下划线格式转换为连字符格式
+  const paramMapping = {
+    'learning_rate': 'learning-rate',
+    'epsilon_start': 'epsilon-start',
+    'epsilon_final': 'epsilon-final',
+    'epsilon_decay': 'epsilon-decay',
+    'batch_size': 'batch-size',
+    'memory_capacity': 'memory-capacity',
+    'target_update_frequency': 'target-update-frequency',
+    'initial_learning': 'initial-learning',
+    'beta_start': 'beta-start',
+    'beta_frames': 'beta-frames',
+    'action_space': 'action-space',
+    'save_frequency': 'save-frequency',
+    'log_frequency': 'log-frequency',
+    'save_model': 'save-model',
+    'use_gpu': 'force-cpu' // 注意：use_gpu=true时应该不传force-cpu参数
+    // 注意：max_steps_per_episode 和 verbose 参数在 train_dqn.py 中不支持，已移除
+  };
+
+  // 添加算法特定参数
+  Object.entries(algorithmParams).forEach(([key, value]) => {
+    // 跳过不支持的参数
+    if (key === 'max_steps_per_episode' || key === 'verbose') {
+      return;
+    }
+    
+    // 使用映射后的参数名
+    const mappedKey = paramMapping[key] || key;
+    
+    if (typeof value === 'boolean') {
+      if (value) {
+        // 特殊处理use_gpu参数
+        if (key === 'use_gpu' && value) {
+          // use_gpu=true时不添加任何参数（默认使用GPU）
+          return;
+        }
+        args.push(`--${mappedKey}`);
+      }
+    } else {
+      args.push(`--${mappedKey}`, String(value));
+    }
+  });
+
+  console.log(`[${algorithm}训练] 启动训练进程 ${processId}:`, args.join(' '));
+
+  const trainProcess = spawn(PYTHON_BIN, args, {
+    cwd: path.join(__dirname),
+    detached: true,
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+
+  runningProcesses[processId] = {
+    process: trainProcess,
+    logs: [],
+    metrics: [],
+    completed: false,
+    type: 'training',
+    algorithm,
+    game,
+    config: req.body
+  };
+
+  // 处理训练输出
+  trainProcess.stdout.on('data', (data) => {
+    const log = data.toString();
+    runningProcesses[processId].logs.push(log);
+    console.log(`[${algorithm}训练] ${log}`);
+    
+    // 解析训练指标
+    const lines = log.split('\n');
+    lines.forEach(line => {
+      if (line.includes('Episode') && line.includes('Reward')) {
+        try {
+          // 解析类似 "Episode 100 - Reward: 150.5, Best: 200.0, Average: 120.3" 的日志
+          const episodeMatch = line.match(/Episode (\d+)/);
+          const rewardMatch = line.match(/Reward: ([\d.-]+)/);
+          const bestMatch = line.match(/Best: ([\d.-]+)/);
+          const avgMatch = line.match(/Average: ([\d.-]+)/);
+          
+          if (episodeMatch && rewardMatch) {
+            const metric = {
+              episode: parseInt(episodeMatch[1]),
+              reward: parseFloat(rewardMatch[1]),
+              best: bestMatch ? parseFloat(bestMatch[1]) : 0,
+              average: avgMatch ? parseFloat(avgMatch[1]) : 0,
+              timestamp: Date.now()
+            };
+            runningProcesses[processId].metrics.push(metric);
+            
+            // 通过WebSocket广播训练指标
+            broadcastTrainingMetrics(processId, metric);
+          }
+        } catch (e) {
+          // 忽略解析错误
+        }
+      }
+    });
+  });
+
+  trainProcess.stderr.on('data', (data) => {
+    const log = data.toString();
+    runningProcesses[processId].logs.push(`[错误] ${log}`);
+    console.error(`[${algorithm}训练错误] ${log}`);
+  });
+
+  trainProcess.on('close', (code) => {
+    console.log(`${algorithm}训练进程退出，退出码: ${code}`);
+    runningProcesses[processId].logs.push(`[完成] ${algorithm}训练完成，退出码: ${code}`);
+    runningProcesses[processId].completed = true;
+    
+    // 通过WebSocket广播训练完成
+    broadcastTrainingComplete(processId, code);
+  });
+
+  res.json({ 
+    success: true, 
+    message: `${algorithm}训练已启动`, 
+    processId,
+    algorithm,
+    game,
+    config: req.body
+  });
+});
+
+// 获取算法配置
+app.get('/api/algorithm-configs', (req, res) => {
+  try {
+    // 直接读取Python配置文件
+    const fs = require('fs');
+    const configPath = path.join(__dirname, 'python/configs/algorithm_configs.py');
+    
+    if (!fs.existsSync(configPath)) {
+      return res.status(404).json({ success: false, message: '配置文件不存在' });
+    }
+    
+    // 读取配置文件内容
+    const configContent = fs.readFileSync(configPath, 'utf8');
+    
+    // 提取配置数据（简单解析）
+    const algorithmsMatch = configContent.match(/ALGORITHM_CONFIGS\s*=\s*({[\s\S]*?^})/m);
+    const gamesMatch = configContent.match(/GAME_ENVIRONMENTS\s*=\s*({[\s\S]*?^})/m);
+    
+    if (!algorithmsMatch || !gamesMatch) {
+      return res.status(500).json({ success: false, message: '配置文件格式错误' });
+    }
+    
+    // 返回硬编码的配置（避免Python执行问题）
+    const configs = {
+      algorithms: {
+        'DQN': {
+          name: 'Deep Q-Network',
+          script: 'python/scripts/train_dqn.py',
+          description: '基于深度Q网络的强化学习算法',
+          parameters: {
+            'learning_rate': {
+              type: 'float',
+              default: 1e-4,
+              min: 1e-6,
+              max: 1e-2,
+              step: 1e-5,
+              precision: 6,
+              description: '学习率'
+            },
+            'gamma': {
+              type: 'float',
+              default: 0.99,
+              min: 0.1,
+              max: 1.0,
+              step: 0.01,
+              precision: 2,
+              description: '折扣因子'
+            },
+            'epsilon_start': {
+              type: 'float',
+              default: 1.0,
+              min: 0.1,
+              max: 1.0,
+              step: 0.1,
+              precision: 1,
+              description: '初始探索率'
+            },
+            'epsilon_final': {
+              type: 'float',
+              default: 0.01,
+              min: 0.001,
+              max: 0.1,
+              step: 0.001,
+              precision: 3,
+              description: '最终探索率'
+            },
+            'epsilon_decay': {
+              type: 'int',
+              default: 100000,
+              min: 10000,
+              max: 1000000,
+              step: 10000,
+              description: '探索率衰减步数'
+            },
+            'batch_size': {
+              type: 'int',
+              default: 32,
+              min: 4,
+              max: 128,
+              step: 4,
+              description: '批次大小'
+            },
+            'memory_capacity': {
+              type: 'int',
+              default: 20000,
+              min: 1000,
+              max: 100000,
+              step: 1000,
+              description: '经验回放缓冲区大小'
+            },
+            'target_update_frequency': {
+              type: 'int',
+              default: 1000,
+              min: 100,
+              max: 10000,
+              step: 100,
+              description: '目标网络更新频率'
+            },
+            'initial_learning': {
+              type: 'int',
+              default: 10000,
+              min: 1000,
+              max: 50000,
+              step: 1000,
+              description: '初始学习步数'
+            },
+            'beta_start': {
+              type: 'float',
+              default: 0.4,
+              min: 0.1,
+              max: 1.0,
+              step: 0.1,
+              precision: 1,
+              description: '初始Beta值'
+            },
+            'beta_frames': {
+              type: 'int',
+              default: 10000,
+              min: 1000,
+              max: 100000,
+              step: 1000,
+              description: 'Beta更新帧数'
+            }
+          },
+          flags: {
+            'render': {
+              type: 'boolean',
+              default: false,
+              description: '启用渲染'
+            },
+            'save_model': {
+              type: 'boolean',
+              default: true,
+              description: '保存模型'
+            }
+          }
+        },
+        'PPO': {
+          name: 'Proximal Policy Optimization',
+          script: 'python/scripts/train_ppo.py',
+          description: '近端策略优化算法',
+          parameters: {
+            'learning_rate': {
+              type: 'float',
+              default: 3e-4,
+              min: 1e-6,
+              max: 1e-2,
+              step: 1e-5,
+              precision: 6,
+              description: '学习率'
+            },
+            'gamma': {
+              type: 'float',
+              default: 0.99,
+              min: 0.1,
+              max: 1.0,
+              step: 0.01,
+              precision: 2,
+              description: '折扣因子'
+            },
+            'clip_ratio': {
+              type: 'float',
+              default: 0.2,
+              min: 0.1,
+              max: 0.5,
+              step: 0.01,
+              precision: 2,
+              description: '裁剪比例'
+            },
+            'value_loss_coef': {
+              type: 'float',
+              default: 0.5,
+              min: 0.1,
+              max: 1.0,
+              step: 0.1,
+              precision: 1,
+              description: '价值损失系数'
+            },
+            'entropy_coef': {
+              type: 'float',
+              default: 0.01,
+              min: 0.001,
+              max: 0.1,
+              step: 0.001,
+              precision: 3,
+              description: '熵系数'
+            },
+            'max_grad_norm': {
+              type: 'float',
+              default: 0.5,
+              min: 0.1,
+              max: 2.0,
+              step: 0.1,
+              precision: 1,
+              description: '最大梯度范数'
+            },
+            'ppo_epochs': {
+              type: 'int',
+              default: 4,
+              min: 1,
+              max: 20,
+              step: 1,
+              description: 'PPO更新轮数'
+            },
+            'batch_size': {
+              type: 'int',
+              default: 64,
+              min: 16,
+              max: 256,
+              step: 16,
+              description: '批次大小'
+            }
+          },
+          flags: {
+            'render': {
+              type: 'boolean',
+              default: false,
+              description: '启用渲染'
+            },
+            'save_model': {
+              type: 'boolean',
+              default: true,
+              description: '保存模型'
+            }
+          }
+        }
+      },
+      games: {
+        'mario': {
+          name: 'Super Mario Bros',
+          environments: [
+            'SuperMarioBros-1-1-v0',
+            'SuperMarioBros-1-2-v0',
+            'SuperMarioBros-1-3-v0',
+            'SuperMarioBros-1-4-v0',
+            'SuperMarioBros-2-1-v0',
+            'SuperMarioBros-2-2-v0',
+            'SuperMarioBros-2-3-v0',
+            'SuperMarioBros-2-4-v0',
+            'SuperMarioBros-3-1-v0',
+            'SuperMarioBros-3-2-v0',
+            'SuperMarioBros-3-3-v0'
+          ],
+          action_spaces: {
+            'simple': 'SIMPLE_MOVEMENT',
+            'complex': 'COMPLEX_MOVEMENT',
+            'right_only': 'RIGHT_ONLY'
+          }
+        },
+        'atari': {
+          name: 'Atari Games',
+          environments: [
+            'Breakout-v4',
+            'Pong-v4',
+            'SpaceInvaders-v4',
+            'MsPacman-v4',
+            'Qbert-v4',
+            'Seaquest-v4'
+          ],
+          action_spaces: {
+            'discrete': 'DISCRETE',
+            'minimal': 'MINIMAL'
+          }
+        }
+      }
+    };
+    
+    res.json({ success: true, ...configs });
+  } catch (error) {
+    console.error('获取算法配置失败:', error);
+    res.status(500).json({ success: false, message: '获取算法配置失败' });
+  }
+});
+
+// 获取算法参数文件内容
+app.get('/api/algorithm-config-file/:algorithm', (req, res) => {
+  try {
+    const { algorithm } = req.params;
+    const fs = require('fs');
+    
+    // 根据算法类型确定配置文件路径
+    let configPath;
+    switch (algorithm.toLowerCase()) {
+      case 'dqn':
+        configPath = path.join(__dirname, 'python/algorithms/dqn/core/constants.py');
+        break;
+      case 'ppo':
+        configPath = path.join(__dirname, 'python/algorithms/ppo/core/constants.py');
+        break;
+      case 'a2c':
+        configPath = path.join(__dirname, 'python/algorithms/a2c/core/constants.py');
+        break;
+      default:
+        return res.status(404).json({ success: false, message: '不支持的算法类型' });
+    }
+    
+    if (!fs.existsSync(configPath)) {
+      return res.status(404).json({ success: false, message: '配置文件不存在' });
+    }
+    
+    const content = fs.readFileSync(configPath, 'utf8');
+    res.json({ 
+      success: true, 
+      content: content,
+      algorithm: algorithm,
+      path: configPath
+    });
+  } catch (error) {
+    console.error('读取算法配置文件失败:', error);
+    res.status(500).json({ success: false, message: '读取配置文件失败' });
+  }
+});
+
+// 保存算法参数文件
+app.post('/api/save-algorithm-config-file', (req, res) => {
+  try {
+    const { algorithm, content } = req.body;
+    const fs = require('fs');
+    
+    if (!algorithm || !content) {
+      return res.status(400).json({ success: false, message: '缺少必要参数' });
+    }
+    
+    // 根据算法类型确定配置文件路径
+    let configPath;
+    switch (algorithm.toLowerCase()) {
+      case 'dqn':
+        configPath = path.join(__dirname, 'python/algorithms/dqn/core/constants.py');
+        break;
+      case 'ppo':
+        configPath = path.join(__dirname, 'python/algorithms/ppo/core/constants.py');
+        break;
+      case 'a2c':
+        configPath = path.join(__dirname, 'python/algorithms/a2c/core/constants.py');
+        break;
+      default:
+        return res.status(404).json({ success: false, message: '不支持的算法类型' });
+    }
+    
+    // 备份原文件
+    const backupPath = configPath + '.backup.' + Date.now();
+    if (fs.existsSync(configPath)) {
+      fs.copyFileSync(configPath, backupPath);
+    }
+    
+    // 保存新内容
+    fs.writeFileSync(configPath, content, 'utf8');
+    
+    res.json({ 
+      success: true, 
+      message: '配置文件保存成功',
+      backupPath: backupPath
+    });
+  } catch (error) {
+    console.error('保存算法配置文件失败:', error);
+    res.status(500).json({ success: false, message: '保存配置文件失败' });
+  }
+});
+
+// 获取算法训练脚本内容
+app.get('/api/algorithm-script/:algorithm', (req, res) => {
+  try {
+    const { algorithm } = req.params;
+    const fs = require('fs');
+    
+    // 根据算法类型确定脚本路径
+    let scriptPath;
+    switch (algorithm.toLowerCase()) {
+      case 'dqn':
+        scriptPath = path.join(__dirname, 'python/scripts/train_dqn.py');
+        break;
+      case 'ppo':
+        scriptPath = path.join(__dirname, 'python/scripts/train_ppo.py');
+        break;
+      case 'a2c':
+        scriptPath = path.join(__dirname, 'python/scripts/train_a2c.py');
+        break;
+      default:
+        return res.status(404).json({ success: false, message: '不支持的算法类型' });
+    }
+    
+    if (!fs.existsSync(scriptPath)) {
+      return res.status(404).json({ success: false, message: '训练脚本不存在' });
+    }
+    
+    const content = fs.readFileSync(scriptPath, 'utf8');
+    res.json({ 
+      success: true, 
+      content: content,
+      algorithm: algorithm,
+      path: scriptPath
+    });
+  } catch (error) {
+    console.error('读取算法训练脚本失败:', error);
+    res.status(500).json({ success: false, message: '读取训练脚本失败' });
+  }
+});
+
+// 启动DQN训练
+app.post('/api/start-dqn-training', (req, res) => {
+  const { 
+    environment = 'SuperMarioBros-1-1-v0',
+    action_space = 'complex',
+    num_episodes = 1000,
+    learning_rate = 1e-4,
+    gamma = 0.99,
+    epsilon_start = 1.0,
+    epsilon_final = 0.01,
+    epsilon_decay = 100000,
+    batch_size = 32,
+    buffer_capacity = 20000,
+    target_update_frequency = 1000,
+    initial_learning = 10000,
+    beta_start = 0.4,
+    beta_frames = 10000,
+    render = false,
+    transfer = false,
+    force_cpu = false
+  } = req.body;
+
+  const processId = Date.now().toString();
+  
+  // 构建训练命令参数
+  const args = [
+    path.join(__dirname, 'super-mario-bros-dqn', 'train.py'),
+    '--environment', environment,
+    '--action-space', action_space,
+    '--num-episodes', String(num_episodes),
+    '--learning-rate', String(learning_rate),
+    '--gamma', String(gamma),
+    '--epsilon-start', String(epsilon_start),
+    '--epsilon-final', String(epsilon_final),
+    '--epsilon-decay', String(epsilon_decay),
+    '--batch-size', String(batch_size),
+    '--buffer-capacity', String(buffer_capacity),
+    '--target-update-frequency', String(target_update_frequency),
+    '--initial-learning', String(initial_learning),
+    '--beta-start', String(beta_start),
+    '--beta-frames', String(beta_frames)
+  ];
+
+  if (render) args.push('--render');
+  if (transfer) args.push('--transfer');
+  if (force_cpu) args.push('--force-cpu');
+
+  console.log(`[DQN训练] 启动训练进程 ${processId}:`, args.join(' '));
+
+  const trainProcess = spawn(PYTHON_BIN, args, {
+    cwd: path.join(__dirname, 'super-mario-bros-dqn'),
+    detached: true,
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+
+  runningProcesses[processId] = {
+    process: trainProcess,
+    logs: [],
+    metrics: [],
+    completed: false,
+    type: 'dqn-training',
+    config: req.body
+  };
+
+  // 处理训练输出
+  trainProcess.stdout.on('data', (data) => {
+    const log = data.toString();
+    runningProcesses[processId].logs.push(log);
+    console.log(`[DQN训练] ${log}`);
+    
+    // 解析训练指标
+    const lines = log.split('\n');
+    lines.forEach(line => {
+      if (line.includes('Episode') && line.includes('Reward')) {
+        try {
+          // 解析类似 "Episode 100 - Reward: 150.5, Best: 200.0, Average: 120.3" 的日志
+          const episodeMatch = line.match(/Episode (\d+)/);
+          const rewardMatch = line.match(/Reward: ([\d.-]+)/);
+          const bestMatch = line.match(/Best: ([\d.-]+)/);
+          const avgMatch = line.match(/Average: ([\d.-]+)/);
+          
+          if (episodeMatch && rewardMatch) {
+            const metric = {
+              episode: parseInt(episodeMatch[1]),
+              reward: parseFloat(rewardMatch[1]),
+              best: bestMatch ? parseFloat(bestMatch[1]) : 0,
+              average: avgMatch ? parseFloat(avgMatch[1]) : 0,
+              timestamp: Date.now()
+            };
+            runningProcesses[processId].metrics.push(metric);
+            
+            // 通过WebSocket广播训练指标
+            broadcastTrainingMetrics(processId, metric);
+          }
+        } catch (e) {
+          // 忽略解析错误
+        }
+      }
+    });
+  });
+
+  trainProcess.stderr.on('data', (data) => {
+    const log = data.toString();
+    runningProcesses[processId].logs.push(`[错误] ${log}`);
+    console.error(`[DQN训练错误] ${log}`);
+  });
+
+  trainProcess.on('close', (code) => {
+    console.log(`DQN训练进程退出，退出码: ${code}`);
+    runningProcesses[processId].logs.push(`[完成] DQN训练完成，退出码: ${code}`);
+    runningProcesses[processId].completed = true;
+    
+    // 通过WebSocket广播训练完成
+    broadcastTrainingComplete(processId, code);
+  });
+
+  res.json({ 
+    success: true, 
+    message: 'DQN训练已启动', 
+    processId,
+    config: req.body
+  });
+});
+
 // 启动玩家控制
 app.post('/api/start-player', (req, res) => {
   const { level, actionSpace, fps } = req.body;
@@ -777,6 +1460,644 @@ function broadcastFrame(processId, frameData) {
     }
   });
 }
+
+// 广播训练指标到所有连接的客户端
+function broadcastTrainingMetrics(processId, metrics) {
+  const message = JSON.stringify({
+    type: 'training_metrics',
+    processId,
+    metrics
+  });
+  
+  wsConnections.forEach((ws, clientId) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(message);
+      } catch (error) {
+        console.error(`[WebSocket] 发送训练指标到客户端 ${clientId} 失败:`, error);
+        wsConnections.delete(clientId);
+      }
+    }
+  });
+}
+
+// 广播训练完成到所有连接的客户端
+function broadcastTrainingComplete(processId, exitCode) {
+  const message = JSON.stringify({
+    type: 'training_complete',
+    processId,
+    exitCode,
+    completed: true
+  });
+  
+  wsConnections.forEach((ws, clientId) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(message);
+      } catch (error) {
+        console.error(`[WebSocket] 发送训练完成到客户端 ${clientId} 失败:`, error);
+        wsConnections.delete(clientId);
+      }
+    }
+  });
+}
+
+// 获取训练指标数据 - 从CSV文件读取
+app.get('/api/training-metrics/:environment', (req, res) => {
+  const { environment } = req.params
+  const csvPath = path.join(__dirname, 'training_metrics', `${environment}.csv`)
+  
+  try {
+    if (!fs.existsSync(csvPath)) {
+      return res.json({ success: true, metrics: [] })
+    }
+    
+    const csvContent = fs.readFileSync(csvPath, 'utf8')
+    const lines = csvContent.trim().split('\n')
+    
+    if (lines.length <= 1) {
+      return res.json({ success: true, metrics: [] })
+    }
+    
+    // 解析CSV头部
+    const headers = lines[0].split(',').map(h => h.trim())
+    const metrics = []
+    
+    // 解析数据行
+    for (let i = 1; i < lines.length; i++) {
+      const values = lines[i].split(',').map(v => v.trim())
+      if (values.length === headers.length) {
+        const metric = {}
+        headers.forEach((header, index) => {
+          const value = values[index]
+          // 尝试转换为数字
+          if (!isNaN(value) && value !== '') {
+            metric[header] = parseFloat(value)
+          } else {
+            metric[header] = value
+          }
+        })
+        metrics.push(metric)
+      }
+    }
+    
+    res.json({ success: true, metrics })
+  } catch (error) {
+    console.error('读取训练指标CSV文件失败:', error)
+    res.status(500).json({ success: false, message: '读取训练指标失败' })
+  }
+})
+
+// 获取可用的训练指标文件列表
+app.get('/api/training-metrics-files', (req, res) => {
+  const metricsDir = path.join(__dirname, 'training_metrics')
+  
+  try {
+    if (!fs.existsSync(metricsDir)) {
+      return res.json({ success: true, files: [] })
+    }
+    
+    const files = fs.readdirSync(metricsDir)
+      .filter(file => file.endsWith('.csv'))
+      .map(file => ({
+        name: file.replace('.csv', ''),
+        path: file,
+        size: fs.statSync(path.join(metricsDir, file)).size,
+        modified: fs.statSync(path.join(metricsDir, file)).mtime
+      }))
+    
+    res.json({ success: true, files })
+  } catch (error) {
+    console.error('获取训练指标文件列表失败:', error)
+    res.status(500).json({ success: false, message: '获取文件列表失败' })
+  }
+})
+
+// 统一的配置管理API
+app.get('/api/config-manager/:algorithm/:game', (req, res) => {
+  try {
+    const { algorithm, game } = req.params;
+    const fs = require('fs');
+    
+    // 获取算法相关文件
+    const algorithmFiles = {
+      constants: path.join(__dirname, `python/algorithms/${algorithm.toLowerCase()}/core/constants.py`),
+      trainer: path.join(__dirname, `python/algorithms/${algorithm.toLowerCase()}/trainer.py`),
+      model: path.join(__dirname, `python/algorithms/${algorithm.toLowerCase()}/core/model.py`),
+      replay_buffer: path.join(__dirname, `python/algorithms/${algorithm.toLowerCase()}/core/replay_buffer.py`),
+      helpers: path.join(__dirname, `python/algorithms/${algorithm.toLowerCase()}/core/helpers.py`),
+      script: path.join(__dirname, `python/scripts/train_${algorithm.toLowerCase()}.py`)
+    };
+    
+    // 获取游戏相关文件
+    const gameFiles = {
+      constants: path.join(__dirname, `python/games/${game.toLowerCase()}/core/constants.py`),
+      wrappers: path.join(__dirname, `python/games/${game.toLowerCase()}/core/wrappers.py`)
+    };
+    
+    const result = {
+      success: true,
+      algorithm: algorithm.toUpperCase(),
+      game: game.toLowerCase(),
+      files: {}
+    };
+    
+    // 读取算法文件
+    Object.entries(algorithmFiles).forEach(([type, filePath]) => {
+      if (fs.existsSync(filePath)) {
+        result.files[`algorithm_${type}`] = {
+          path: filePath,
+          content: fs.readFileSync(filePath, 'utf8'),
+          type: type,
+          category: 'algorithm'
+        };
+      }
+    });
+    
+    // 读取游戏文件
+    Object.entries(gameFiles).forEach(([type, filePath]) => {
+      if (fs.existsSync(filePath)) {
+        result.files[`game_${type}`] = {
+          path: filePath,
+          content: fs.readFileSync(filePath, 'utf8'),
+          type: type,
+          category: 'game'
+        };
+      }
+    });
+    
+    res.json(result);
+  } catch (error) {
+    console.error('读取配置失败:', error);
+    res.status(500).json({ success: false, message: '读取配置失败' });
+  }
+});
+
+// 保存配置文件
+app.post('/api/config-manager/save', (req, res) => {
+  try {
+    const { algorithm, game, fileType, category, content } = req.body;
+    const fs = require('fs');
+    
+    if (!algorithm || !fileType || !category || !content) {
+      return res.status(400).json({ success: false, message: '缺少必要参数' });
+    }
+    
+    // 确定文件路径
+    let filePath;
+    if (category === 'algorithm') {
+      if (fileType === 'trainer') {
+        filePath = path.join(__dirname, `python/algorithms/${algorithm.toLowerCase()}/trainer.py`);
+      } else if (fileType === 'script') {
+        filePath = path.join(__dirname, `python/scripts/train_${algorithm.toLowerCase()}.py`);
+      } else {
+        filePath = path.join(__dirname, `python/algorithms/${algorithm.toLowerCase()}/core/${fileType}.py`);
+      }
+    } else if (category === 'game') {
+      filePath = path.join(__dirname, `python/games/${game.toLowerCase()}/core/${fileType}.py`);
+    } else {
+      return res.status(400).json({ success: false, message: '无效的文件类别' });
+    }
+    
+    // 确保不会修改原始备份
+    const originalBackupDir = path.join(__dirname, 'backups', `${algorithm.toUpperCase()}_${game.charAt(0).toUpperCase() + game.slice(1)}_Original`);
+    if (filePath.startsWith(originalBackupDir)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: '不能修改原始备份文件' 
+      });
+    }
+    
+    console.log('保存文件请求:', { algorithm, game, fileType, category, contentLength: typeof content === 'string' ? content.length : 'not string' });
+    console.log('文件路径:', filePath);
+    console.log('内容类型:', typeof content);
+    
+    // 确保content是字符串
+    if (typeof content !== 'string') {
+      console.error('内容不是字符串类型:', typeof content, content);
+      return res.status(400).json({ success: false, message: '文件内容必须是字符串类型' });
+    }
+    
+    // 先保存新内容到实际文件
+    fs.writeFileSync(filePath, content, 'utf8');
+    console.log('文件已保存到:', filePath);
+    
+    // 然后创建版本备份
+    const now = new Date();
+    const timestamp = now.toISOString().slice(0, 19).replace(/[:.]/g, '-');
+    const backupBaseDir = path.join(__dirname, 'backups');
+    const versionDir = path.join(backupBaseDir, `${algorithm.toUpperCase()}_${game.charAt(0).toUpperCase() + game.slice(1)}_Versions`);
+    const fileDir = path.join(versionDir, `${fileType}_${timestamp}`);
+    
+    // 确保备份目录存在
+    if (!fs.existsSync(fileDir)) {
+      fs.mkdirSync(fileDir, { recursive: true });
+    }
+    
+    const backupPath = path.join(fileDir, `${fileType}.py`);
+    
+    // 先保存新内容到实际文件
+    fs.writeFileSync(filePath, content, 'utf8');
+    
+    // 备份刚保存的文件
+    fs.copyFileSync(filePath, backupPath);
+    
+    res.json({
+      success: true,
+      message: '文件保存成功',
+      backupPath: backupPath,
+      filePath: filePath
+    });
+  } catch (error) {
+    console.error('保存文件失败:', error);
+    res.status(500).json({ success: false, message: '保存文件失败' });
+  }
+});
+
+// 重置为默认配置
+app.post('/api/config-manager/reset', (req, res) => {
+  try {
+    const { algorithm, game, fileType, category } = req.body;
+    const fs = require('fs');
+    
+    if (!algorithm || !fileType || !category) {
+      return res.status(400).json({ success: false, message: '缺少必要参数' });
+    }
+    
+    // 确定文件路径
+    let filePath;
+    if (category === 'algorithm') {
+      if (fileType === 'script') {
+        filePath = path.join(__dirname, `python/scripts/train_${algorithm.toLowerCase()}.py`);
+      } else {
+        filePath = path.join(__dirname, `python/algorithms/${algorithm.toLowerCase()}/core/${fileType}.py`);
+      }
+    } else if (category === 'game') {
+      filePath = path.join(__dirname, `python/games/${game.toLowerCase()}/core/${fileType}.py`);
+    }
+    
+    // 确保不会修改原始备份
+    const originalBackupDir = path.join(__dirname, 'backups', `${algorithm.toUpperCase()}_${game.charAt(0).toUpperCase() + game.slice(1)}_Original`);
+    if (filePath.startsWith(originalBackupDir)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: '不能修改原始备份文件' 
+      });
+    }
+    
+    // 从原始super-mario-bros-dqn文件夹恢复
+    let sourcePath;
+    if (algorithm.toLowerCase() === 'dqn' && game.toLowerCase() === 'mario') {
+      if (fileType === 'constants') {
+        sourcePath = path.join(__dirname, 'super-mario-bros-dqn/core/constants.py');
+      } else if (fileType === 'wrappers') {
+        sourcePath = path.join(__dirname, 'super-mario-bros-dqn/core/wrappers.py');
+      } else if (fileType === 'model') {
+        sourcePath = path.join(__dirname, 'super-mario-bros-dqn/core/model.py');
+      } else if (fileType === 'replay_buffer') {
+        sourcePath = path.join(__dirname, 'super-mario-bros-dqn/core/replay_buffer.py');
+      } else if (fileType === 'helpers') {
+        sourcePath = path.join(__dirname, 'super-mario-bros-dqn/core/helpers.py');
+      } else if (fileType === 'trainer') {
+        // trainer文件没有原始版本，使用当前版本作为默认
+        sourcePath = filePath;
+      } else if (fileType === 'script') {
+        // script文件没有原始版本，使用当前版本作为默认
+        sourcePath = filePath;
+      }
+    } else {
+      // 对于其他算法和游戏，使用当前版本作为默认
+      sourcePath = filePath;
+    }
+    
+    if (sourcePath && fs.existsSync(sourcePath)) {
+      // 创建版本备份 - 重置前备份当前状态
+      const now = new Date();
+      const timestamp = now.toISOString().slice(0, 19).replace(/[:.]/g, '-');
+      const backupBaseDir = path.join(__dirname, 'backups');
+      const versionDir = path.join(backupBaseDir, `${algorithm.toUpperCase()}_${game.charAt(0).toUpperCase() + game.slice(1)}_Versions`);
+      const fileDir = path.join(versionDir, `${fileType}_reset_${timestamp}`);
+      
+      // 确保备份目录存在
+      if (!fs.existsSync(fileDir)) {
+        fs.mkdirSync(fileDir, { recursive: true });
+      }
+      
+      const backupPath = path.join(fileDir, `${fileType}.py`);
+      
+      if (fs.existsSync(filePath)) {
+        fs.copyFileSync(filePath, backupPath);
+      }
+      
+      // 恢复默认内容
+      if (sourcePath !== filePath) {
+        fs.copyFileSync(sourcePath, filePath);
+      }
+      
+      res.json({
+        success: true,
+        message: '文件已重置为默认值',
+        backupPath: backupPath,
+        filePath: filePath
+      });
+    } else {
+      // 如果没有找到默认文件，说明该文件类型不支持重置
+      res.status(400).json({ 
+        success: false, 
+        message: `文件类型 ${fileType} 不支持重置为默认值，因为没有找到原始版本` 
+      });
+    }
+  } catch (error) {
+    console.error('重置文件失败:', error);
+    res.status(500).json({ success: false, message: '重置文件失败' });
+  }
+});
+
+// 创建原始备份
+app.post('/api/config-manager/create-original-backup', (req, res) => {
+  try {
+    const { algorithm, game } = req.body;
+    const fs = require('fs');
+    
+    if (!algorithm || !game) {
+      return res.status(400).json({ success: false, message: '缺少必要参数' });
+    }
+    
+    // 只支持DQN+Mario的原始备份
+    if (algorithm.toLowerCase() !== 'dqn' || game.toLowerCase() !== 'mario') {
+      return res.status(400).json({ 
+        success: false, 
+        message: '目前只支持DQN+Mario的原始备份' 
+      });
+    }
+    
+    const backupBaseDir = path.join(__dirname, 'backups');
+    const originalDir = path.join(backupBaseDir, `${algorithm.toUpperCase()}_${game.charAt(0).toUpperCase() + game.slice(1)}_Original`);
+    
+    // 创建目录结构
+    const algorithmDir = path.join(originalDir, 'algorithm');
+    const gameDir = path.join(originalDir, 'game');
+    
+    if (!fs.existsSync(algorithmDir)) {
+      fs.mkdirSync(algorithmDir, { recursive: true });
+    }
+    if (!fs.existsSync(gameDir)) {
+      fs.mkdirSync(gameDir, { recursive: true });
+    }
+    
+    // 复制算法文件
+    const algorithmFiles = {
+      constants: 'super-mario-bros-dqn/core/constants.py',
+      model: 'super-mario-bros-dqn/core/model.py',
+      replay_buffer: 'super-mario-bros-dqn/core/replay_buffer.py',
+      helpers: 'super-mario-bros-dqn/core/helpers.py'
+    };
+    
+    // 复制游戏文件
+    const gameFiles = {
+      wrappers: 'super-mario-bros-dqn/core/wrappers.py'
+    };
+    
+    let copiedFiles = [];
+    
+    // 复制算法文件
+    Object.entries(algorithmFiles).forEach(([fileType, sourcePath]) => {
+      const fullSourcePath = path.join(__dirname, sourcePath);
+      const targetPath = path.join(algorithmDir, `${fileType}.py`);
+      
+      if (fs.existsSync(fullSourcePath)) {
+        fs.copyFileSync(fullSourcePath, targetPath);
+        copiedFiles.push(`algorithm/${fileType}.py`);
+      }
+    });
+    
+    // 复制游戏文件
+    Object.entries(gameFiles).forEach(([fileType, sourcePath]) => {
+      const fullSourcePath = path.join(__dirname, sourcePath);
+      const targetPath = path.join(gameDir, `${fileType}.py`);
+      
+      if (fs.existsSync(fullSourcePath)) {
+        fs.copyFileSync(fullSourcePath, targetPath);
+        copiedFiles.push(`game/${fileType}.py`);
+      }
+    });
+    
+    res.json({
+      success: true,
+      message: '原始备份创建成功',
+      backupPath: originalDir,
+      copiedFiles: copiedFiles
+    });
+    
+  } catch (error) {
+    console.error('创建原始备份失败:', error);
+    res.status(500).json({ success: false, message: '创建原始备份失败' });
+  }
+});
+
+// 重置为原始备份
+app.post('/api/config-manager/reset-to-original', (req, res) => {
+  try {
+    const { algorithm, game, fileType, category } = req.body;
+    const fs = require('fs');
+    
+    if (!algorithm || !game || !fileType || !category) {
+      return res.status(400).json({ success: false, message: '缺少必要参数' });
+    }
+    
+    // 确定文件路径
+    let filePath;
+    if (category === 'algorithm') {
+      if (fileType === 'trainer') {
+        filePath = path.join(__dirname, `python/algorithms/${algorithm.toLowerCase()}/trainer.py`);
+      } else if (fileType === 'script') {
+        filePath = path.join(__dirname, `python/scripts/train_${algorithm.toLowerCase()}.py`);
+      } else {
+        filePath = path.join(__dirname, `python/algorithms/${algorithm.toLowerCase()}/core/${fileType}.py`);
+      }
+    } else if (category === 'game') {
+      filePath = path.join(__dirname, `python/games/${game.toLowerCase()}/core/${fileType}.py`);
+    } else {
+      return res.status(400).json({ success: false, message: '无效的文件类别' });
+    }
+    
+    // 确保不会修改原始备份
+    const originalBackupDir = path.join(__dirname, 'backups', `${algorithm.toUpperCase()}_${game.charAt(0).toUpperCase() + game.slice(1)}_Original`);
+    if (filePath.startsWith(originalBackupDir)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: '不能修改原始备份文件' 
+      });
+    }
+    
+    // 原始备份路径
+    const originalDir = path.join(__dirname, 'backups', `${algorithm.toUpperCase()}_${game.charAt(0).toUpperCase() + game.slice(1)}_Original`);
+    const originalFilePath = path.join(originalDir, category === 'algorithm' ? 'algorithm' : 'game', `${fileType}.py`);
+    
+    if (!fs.existsSync(originalFilePath)) {
+      return res.status(404).json({ 
+        success: false, 
+        message: '未找到原始备份文件，请先创建原始备份' 
+      });
+    }
+    
+    // 直接从原始备份恢复到实际文件
+    console.log('恢复文件:', { originalFilePath, filePath });
+    console.log('原始文件存在:', fs.existsSync(originalFilePath));
+    console.log('目标文件存在:', fs.existsSync(filePath));
+    
+    fs.copyFileSync(originalFilePath, filePath);
+    console.log('文件复制完成');
+    
+    res.json({
+      success: true,
+      message: '文件已重置为原始状态',
+      originalPath: originalFilePath
+    });
+    
+  } catch (error) {
+    console.error('重置为原始状态失败:', error);
+    res.status(500).json({ success: false, message: '重置为原始状态失败' });
+  }
+});
+
+app.get('/api/config-manager/backups/:algorithm/:game/:fileType', (req, res) => {
+  try {
+    const { algorithm, game, fileType } = req.params;
+    const fs = require('fs');
+    
+    // 构建版本备份目录路径
+    const versionDir = path.join(__dirname, 'backups', `${algorithm.toUpperCase()}_${game.charAt(0).toUpperCase() + game.slice(1)}_Versions`);
+    
+    if (!fs.existsSync(versionDir)) {
+      return res.json({
+        success: true,
+        backups: []
+      });
+    }
+    
+    // 查找该文件类型的所有版本备份
+    const files = fs.readdirSync(versionDir).filter(dir => 
+      dir.startsWith(`${fileType}_`) && fs.statSync(path.join(versionDir, dir)).isDirectory()
+    );
+    
+    const backups = files.map(dir => {
+      const backupFile = path.join(versionDir, dir, `${fileType}.py`);
+      const stats = fs.statSync(backupFile);
+      return {
+        filename: dir,
+        path: backupFile,
+        created: stats.birthtime,
+        size: stats.size,
+        operation: 'save'
+      };
+    }).sort((a, b) => b.created - a.created);
+    
+    res.json({
+      success: true,
+      backups: backups
+    });
+  } catch (error) {
+    console.error('获取备份列表失败:', error);
+    res.status(500).json({ success: false, message: '获取备份列表失败' });
+  }
+});
+
+// 删除备份
+app.post('/api/config-manager/delete-backup', (req, res) => {
+  try {
+    const { backupPath } = req.body;
+    const fs = require('fs');
+    
+    if (!backupPath) {
+      return res.status(400).json({ success: false, message: '缺少备份路径' });
+    }
+    
+    // 确保不会删除原始备份
+    const originalBackupDir = path.join(__dirname, 'backups');
+    const allOriginalDirs = fs.readdirSync(originalBackupDir).filter(dir => 
+      dir.includes('_Original') && fs.statSync(path.join(originalBackupDir, dir)).isDirectory()
+    );
+    
+    const backupDir = path.dirname(backupPath);
+    const isOriginalBackup = allOriginalDirs.some(originalDir => 
+      backupDir.includes(originalDir)
+    );
+    
+    if (isOriginalBackup) {
+      return res.status(400).json({ 
+        success: false, 
+        message: '不能删除原始备份' 
+      });
+    }
+    
+    // 删除整个备份目录
+    if (fs.existsSync(backupDir)) {
+      fs.rmSync(backupDir, { recursive: true, force: true });
+      res.json({
+        success: true,
+        message: '备份删除成功'
+      });
+    } else {
+      res.status(404).json({ success: false, message: '备份不存在' });
+    }
+    
+  } catch (error) {
+    console.error('删除备份失败:', error);
+    res.status(500).json({ success: false, message: '删除备份失败' });
+  }
+});
+
+// 恢复备份
+app.post('/api/config-manager/restore', (req, res) => {
+  try {
+    const { algorithm, game, fileType, category, backupPath } = req.body;
+    const fs = require('fs');
+    
+    if (!algorithm || !game || !fileType || !category || !backupPath) {
+      return res.status(400).json({ success: false, message: '缺少必要参数' });
+    }
+    
+    // 确定目标文件路径
+    let targetPath;
+    if (category === 'algorithm') {
+      if (fileType === 'trainer') {
+        targetPath = path.join(__dirname, `python/algorithms/${algorithm.toLowerCase()}/trainer.py`);
+      } else if (fileType === 'script') {
+        targetPath = path.join(__dirname, `python/scripts/train_${algorithm.toLowerCase()}.py`);
+      } else {
+        targetPath = path.join(__dirname, `python/algorithms/${algorithm.toLowerCase()}/core/${fileType}.py`);
+      }
+    } else if (category === 'game') {
+      targetPath = path.join(__dirname, `python/games/${game.toLowerCase()}/core/${fileType}.py`);
+    } else {
+      return res.status(400).json({ success: false, message: '无效的文件类别' });
+    }
+    
+    console.log('恢复备份请求:', { algorithm, game, fileType, category, backupPath });
+    
+    // 使用Node.js path模块正确处理路径
+    const normalizedBackupPath = path.resolve(backupPath);
+    console.log('标准化后的备份路径:', normalizedBackupPath);
+    console.log('备份文件存在:', fs.existsSync(normalizedBackupPath));
+    
+    if (!fs.existsSync(normalizedBackupPath)) {
+      return res.status(404).json({ success: false, message: '备份文件不存在' });
+    }
+    
+    // 直接恢复备份文件
+    fs.copyFileSync(normalizedBackupPath, targetPath);
+    
+    res.json({
+      success: true,
+      message: '备份恢复成功',
+      restoredPath: targetPath
+    });
+  } catch (error) {
+    console.error('恢复备份失败:', error);
+    res.status(500).json({ success: false, message: '恢复备份失败' });
+  }
+});
 
 // 启动服务器
 const server = app.listen(PORT, () => {
