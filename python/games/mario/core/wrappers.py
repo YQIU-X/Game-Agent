@@ -9,10 +9,9 @@ Mario游戏环境包装器
 import cv2
 import numpy as np
 from collections import deque
-from gym import ObservationWrapper, wrappers, Wrapper
+from gym import make, ObservationWrapper, wrappers, Wrapper
 from gym.spaces import Box
 from nes_py.wrappers import JoypadSpace
-import gym_super_mario_bros
 
 
 class FrameDownsample(ObservationWrapper):
@@ -175,7 +174,7 @@ def wrap_mario_environment(environment, action_space, monitor=False, iteration=0
     Returns:
         env: 包装后的环境
     """
-    env = gym_super_mario_bros.make(environment)
+    env = make(environment)
     
     if monitor:
         env = wrappers.Monitor(env, f'recording/run{iteration}', force=True)

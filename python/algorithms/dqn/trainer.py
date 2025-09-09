@@ -18,14 +18,6 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-# 添加utils路径
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'utils'))
-try:
-    from render_service import get_render_service
-    RENDER_SERVICE_AVAILABLE = True
-except ImportError:
-    RENDER_SERVICE_AVAILABLE = False
-
 import numpy as np
 import torch
 import torch.optim as optim
@@ -221,31 +213,7 @@ class DQNTrainer:
             
             # 渲染
             if render:
-                try:
-                    # 使用渲染服务进行headless渲染
-                    if RENDER_SERVICE_AVAILABLE:
-                        render_service = get_render_service()
-                        # 获取当前episode和step信息
-                        current_episode = len(self.episode_rewards) + 1
-                        frame_data = render_service.render_frame(
-                            self.env.unwrapped,  # 使用未包装的环境
-                            current_episode,
-                            episode_length,
-                            save_image=True
-                        )
-                        if frame_data:
-                            # 可以在这里将frame_data发送到前端
-                            pass
-                    else:
-                        # 回退到原始渲染
-                        self.env.render()
-                except Exception as e:
-                    # 如果渲染失败，记录错误但不中断训练
-                    if not hasattr(self, '_render_error_logged'):
-                        print(f"[警告] 渲染失败: {e}", flush=True)
-                        print(f"[警告] 继续训练但不显示画面", flush=True)
-                        print(f"[提示] 在Windows服务器环境中，渲染功能需要图形界面支持", flush=True)
-                        self._render_error_logged = True
+                self.env.render()
             
             # 执行动作
             next_state, reward, done, info = self.env.step(action)
