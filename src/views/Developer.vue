@@ -393,6 +393,18 @@
               <div class="code-editor-container">
                 <div class="syntax-highlight-editor">
                   <pre><code :class="languageClass" v-html="highlightedCode"></code></pre>
+                  <textarea
+                    v-model="currentFileContent"
+                    class="code-textarea-overlay"
+                    @input="onCodeChange"
+                    @keydown="onCodeKeydown"
+                    @scroll="onTextareaScroll"
+                    spellcheck="false"
+                    autocomplete="off"
+                    autocorrect="off"
+                    autocapitalize="off"
+                    placeholder="代码内容将在这里显示..."
+                  ></textarea>
                 </div>
               </div>
             </el-card>
@@ -683,6 +695,8 @@ export default {
     const backupList = ref([])
     const syntaxHighlight = ref(true)
     const configForm = ref({})
+    const isEditing = ref(false)
+    const originalContent = ref('')
     
     // 兼容性变量 (保留旧API支持)
     const configFileType = ref('constants')
@@ -772,6 +786,48 @@ export default {
       if (!currentFileInfo.value) return false
       const supportedResetTypes = ['constants', 'wrappers', 'model', 'replay_buffer', 'helpers', 'trainer', 'script']
       return supportedResetTypes.includes(currentFileInfo.value.type)
+    })
+    
+    // 语言类名
+    const languageClass = computed(() => {
+      if (!currentFileInfo.value) return 'language-python'
+      const fileType = currentFileInfo.value.type
+      switch (fileType) {
+        case 'constants':
+        case 'script':
+        case 'trainer':
+        case 'model':
+        case 'replay_buffer':
+          return 'language-python'
+        case 'wrappers':
+          return 'language-python'
+        default:
+          return 'language-python'
+      }
+    })
+    
+    // 语法高亮的代码
+    const highlightedCode = computed(() => {
+      if (!currentFileContent.value) return ''
+      
+      try {
+        // 使用 Prism.js 进行语法高亮
+        const highlighted = Prism.highlight(
+          currentFileContent.value,
+          Prism.languages.python,
+          'python'
+        )
+        return highlighted
+      } catch (error) {
+        console.error('语法高亮失败:', error)
+        // 如果高亮失败，返回原始内容并转义HTML
+        return currentFileContent.value
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;')
+      }
     })
     
     // 监听备份管理对话框的打开，自动刷新备份列表
@@ -980,24 +1036,20 @@ export default {
     const resetTrainingConfig = async () => {
       try {
         ElMessageBox.confirm(
-          '确定要重置所有配置文件为原始备份状态吗？这将覆盖当前的所有配置。',
-          '重置确认',
+          '确定要重置算法和环境的常量配置为原始备份状态吗？这将覆盖当前的常量配置。',
+          '重置常量配置确认',
           {
             confirmButtonText: '确定',
             cancelButtonText: '取消',
             type: 'warning'
           }
         ).then(async () => {
-          console.log('开始重置配置文件...')
+          console.log('开始重置常量配置文件...')
           
-          // 需要重置的文件列表
+          // 只重置常量配置文件
           const filesToReset = [
             { fileType: 'constants', category: 'algorithm' },
-            { fileType: 'constants', category: 'game' },
-            { fileType: 'model', category: 'algorithm' },
-            { fileType: 'replay_buffer', category: 'algorithm' },
-            { fileType: 'trainer', category: 'algorithm' },
-            { fileType: 'wrappers', category: 'game' }
+            { fileType: 'constants', category: 'game' }
           ]
           
           let successCount = 0
@@ -1038,7 +1090,7 @@ export default {
           
           // 显示结果
           if (successCount > 0) {
-            let message = `成功重置 ${successCount} 个配置文件`
+            let message = `成功重置 ${successCount} 个常量配置文件`
             if (failCount > 0) {
               message += `，${failCount} 个文件重置失败`
             }
@@ -1048,16 +1100,19 @@ export default {
               console.warn('重置失败的文件:', failedFiles)
             }
           } else {
-            ElMessage.error('所有文件重置失败')
+            ElMessage.error('所有常量配置文件重置失败')
           }
           
           // 重新加载配置
           await loadConfigs()
           
+          // 重新加载参数配置界面
+          await loadAllConfigs()
+          
           // 从备份文件初始化训练控制表单
           await initializeTrainingFormFromBackup()
           
-          console.log('配置文件重置完成')
+          console.log('常量配置文件重置完成')
         }).catch(() => {
           // 用户取消
         })
@@ -1069,14 +1124,24 @@ export default {
     
     // 统一配置管理方法
     const loadAllConfigs = async () => {
+      console.log('loadAllConfigs被调用')
+      console.log('selectedAlgorithm.value:', selectedAlgorithm.value)
+      console.log('selectedGame.value:', selectedGame.value)
+      
       if (!selectedAlgorithm.value || !selectedGame.value) {
         ElMessage.warning('请先选择算法和游戏')
         return
       }
       
       try {
-        const res = await fetch(`/api/config-manager/${selectedAlgorithm.value.toLowerCase()}/${selectedGame.value.toLowerCase()}`)
+        const apiUrl = `/api/config-manager/${selectedAlgorithm.value.toLowerCase()}/${selectedGame.value.toLowerCase()}`
+        console.log('API URL:', apiUrl)
+        
+        const res = await fetch(apiUrl)
+        console.log('API响应状态:', res.status, res.ok)
+        
         const result = await res.json()
+        console.log('API返回结果:', result)
         
         if (result.success) {
           configFiles.value = Object.entries(result.files).map(([key, file]) => ({
@@ -1090,11 +1155,18 @@ export default {
           
           if (configFiles.value.length > 0) {
             activeFileTab.value = configFiles.value[0].key
-            loadFileContent(configFiles.value[0])
+            console.log('设置activeFileTab为:', activeFileTab.value)
+            
+            // 等待DOM更新完成，避免ResizeObserver错误
+            await nextTick()
+            setTimeout(async () => {
+              await loadFileContent(configFiles.value[0])
+            }, 100)
           }
           
           ElMessage.success(`配置加载成功，共 ${configFiles.value.length} 个文件`)
         } else {
+          console.error('API返回失败:', result.message)
           ElMessage.error(result.message || '加载配置失败')
         }
       } catch (error) {
@@ -1104,7 +1176,9 @@ export default {
     }
     
     const loadFileContent = async (file) => {
-      console.log('加载文件内容:', file)
+      console.log('loadFileContent被调用，文件:', file)
+      console.log('selectedAlgorithm.value:', selectedAlgorithm.value)
+      console.log('selectedGame.value:', selectedGame.value)
       
       try {
         // 重新从服务器获取文件内容
@@ -1124,9 +1198,18 @@ export default {
               }
             }
             
-            currentFileContent.value = updatedFile.content
-            currentFileInfo.value = updatedFile
-            console.log('文件内容已从服务器重新加载:', updatedFile.type)
+            // 使用 nextTick 确保DOM更新完成
+            await nextTick()
+            setTimeout(() => {
+              currentFileContent.value = updatedFile.content
+              currentFileInfo.value = {
+                ...updatedFile,
+                key: file.key
+              }
+              console.log('文件内容已从服务器重新加载:', updatedFile.type)
+              console.log('文件内容长度:', updatedFile.content ? updatedFile.content.length : 0)
+              console.log('文件内容前100字符:', updatedFile.content ? updatedFile.content.substring(0, 100) : '无内容')
+            }, 50)
           }
         } else {
           // 如果API失败，使用缓存的内容
@@ -1143,7 +1226,7 @@ export default {
       console.log('当前文件信息已更新:', currentFileInfo.value)
     }
     
-    const onFileTabClick = (tab) => {
+    const onFileTabClick = async (tab) => {
       console.log('点击的标签页:', tab)
       console.log('标签页名称:', tab.paneName)
       console.log('当前文件列表:', configFiles.value)
@@ -1152,15 +1235,12 @@ export default {
       console.log('找到的文件:', file)
       
       if (file) {
-        // 强制更新响应式数据
-        currentFileContent.value = null
-        currentFileInfo.value = null
-        
-        // 使用 nextTick 确保 DOM 更新
-        nextTick(async () => {
+        // 等待DOM更新完成，避免ResizeObserver错误
+        await nextTick()
+        setTimeout(async () => {
           await loadFileContent(file)
           console.log('已加载文件内容:', file.type, file.category)
-        })
+        }, 50)
       } else {
         console.error('未找到对应的文件')
       }
@@ -1192,6 +1272,10 @@ export default {
         if (result.success) {
           ElMessage.success('备份保存成功')
           
+          // 重置编辑状态
+          isEditing.value = false
+          originalContent.value = currentFileContent.value
+          
           // 重新加载所有配置
           await loadAllConfigs()
           
@@ -1199,7 +1283,7 @@ export default {
           await refreshBackups()
           
           // 如果保存的是constants.py文件，同步更新训练控制参数
-          if (currentFileInfo.value.type === 'constants' && currentFileInfo.value.category === 'algorithm') {
+          if (currentFileInfo.value.type === 'constants') {
             await syncTrainingFormFromConstants()
           }
         } else {
@@ -1256,7 +1340,7 @@ export default {
           await loadAllConfigs()
           
           // 如果重置的是constants.py文件，同步更新训练控制参数
-          if (currentFileInfo.value.type === 'constants' && currentFileInfo.value.category === 'algorithm') {
+          if (currentFileInfo.value.type === 'constants') {
             await syncTrainingFormFromConstants()
           }
         } else {
@@ -1321,6 +1405,11 @@ export default {
           // 重新加载配置
           await loadAllConfigs()
           await refreshBackups()
+          
+          // 如果恢复的是constants.py文件，同步更新训练控制参数
+          if (currentFileInfo.value.type === 'constants') {
+            await syncTrainingFormFromConstants()
+          }
         } else {
           ElMessage.error(result.message || '恢复备份失败')
         }
@@ -1469,54 +1558,61 @@ export default {
       ElMessage.info('代码格式化功能待实现')
     }
     
-    // 语法高亮相关
-    const languageClass = computed(() => {
-      if (!currentFileInfo.value) return 'language-python'
-      
-      const fileType = currentFileInfo.value.type
-      const languageMap = {
-        'constants': 'language-python',
-        'trainer': 'language-python', 
-        'model': 'language-python',
-        'replay_buffer': 'language-python',
-        'helpers': 'language-python',
-        'script': 'language-python',
-        'wrappers': 'language-python'
+    // 代码编辑相关函数
+    const onCodeChange = () => {
+      isEditing.value = true
+    }
+    
+    const onCodeKeydown = (event) => {
+      // 处理Tab键缩进
+      if (event.key === 'Tab') {
+        event.preventDefault()
+        const textarea = event.target
+        const start = textarea.selectionStart
+        const end = textarea.selectionEnd
+        const value = textarea.value
+        const newValue = value.substring(0, start) + '    ' + value.substring(end)
+        
+        currentFileContent.value = newValue
+        
+        // 设置光标位置
+        nextTick(() => {
+          textarea.selectionStart = textarea.selectionEnd = start + 4
+        })
       }
       
-      return languageMap[fileType] || 'language-python'
-    })
+      // 处理Ctrl+S保存
+      if (event.ctrlKey && event.key === 's') {
+        event.preventDefault()
+        saveCurrentFile()
+      }
+    }
+    
+    // 滚动同步
+    const onTextareaScroll = (event) => {
+      const textarea = event.target
+      const pre = textarea.parentElement.querySelector('pre')
+      if (pre) {
+        pre.scrollTop = textarea.scrollTop
+        pre.scrollLeft = textarea.scrollLeft
+      }
+    }
+    
+    const startEditing = () => {
+      originalContent.value = currentFileContent.value
+      isEditing.value = true
+    }
+    
+    const cancelEditing = () => {
+      currentFileContent.value = originalContent.value
+      isEditing.value = false
+    }
+    
     
     const getLanguageClass = () => {
       return languageClass.value
     }
     
-    const highlightedCode = computed(() => {
-      if (!currentFileContent.value || !syntaxHighlight.value) {
-        return currentFileContent.value || ''
-      }
-      
-      // 检查Prism是否可用
-      if (typeof Prism === 'undefined' || !Prism.highlight) {
-        console.warn('Prism.js未正确加载，使用普通文本')
-        return currentFileContent.value
-      }
-      
-      try {
-        const language = languageClass.value.replace('language-', '')
-        const grammar = Prism.languages[language] || Prism.languages.python
-        
-        if (!grammar) {
-          console.warn(`未找到语言语法: ${language}`)
-          return currentFileContent.value
-        }
-        
-        return Prism.highlight(currentFileContent.value, grammar, language)
-      } catch (error) {
-        console.error('语法高亮失败:', error)
-        return currentFileContent.value
-      }
-    })
     
     // 监听文件内容变化，重新高亮
     watch([currentFileContent, syntaxHighlight], () => {
@@ -1944,6 +2040,13 @@ export default {
           // 开始轮询日志
           startLogPolling()
           
+          // 自动同步训练参数到配置文件
+          await syncConstantsFromTrainingForm()
+          
+          // 立即加载可用的指标文件并启动自动刷新
+          await loadAvailableMetricsFiles()
+          startAutoRefresh()
+          
           ElMessage.success(`${selectedAlgorithm.value}训练已开始`)
           if (activeMenu.value !== 'training') {
             activeMenu.value = 'training'
@@ -2083,15 +2186,41 @@ export default {
       console.log('realtimeChartInstance.value:', !!realtimeChartInstance.value)
       
       if (realtimeChartRef.value && !realtimeChartInstance.value) {
-        try {
-          realtimeChartInstance.value = echarts.init(realtimeChartRef.value)
-          console.log('图表初始化成功')
-          
-          // 立即更新图表
-          updateRealtimeChart()
-        } catch (error) {
-          console.error('图表初始化失败:', error)
-        }
+        const container = realtimeChartRef.value
+        
+        // 强制设置容器尺寸
+        container.style.width = '100%'
+        container.style.height = '400px'
+        container.style.minHeight = '400px'
+        container.style.display = 'block'
+        
+        // 等待下一个事件循环，确保样式生效
+        setTimeout(() => {
+          try {
+            // 禁用 ECharts 的 ResizeObserver
+            realtimeChartInstance.value = echarts.init(container, null, {
+              renderer: 'canvas',
+              useDirtyRect: false,
+              width: 800,
+              height: 400
+            })
+            
+            // 禁用图表的自动 resize
+            if (realtimeChartInstance.value) {
+              realtimeChartInstance.value.getZr().off('resize')
+            }
+            
+            console.log('图表初始化成功')
+            
+            // 延迟更新图表
+            setTimeout(() => {
+              updateRealtimeChart()
+            }, 100)
+          } catch (error) {
+            console.error('图表初始化失败:', error)
+          }
+        }, 100)
+        
       } else if (realtimeChartInstance.value) {
         console.log('图表实例已存在，直接更新')
         updateRealtimeChart()
@@ -2154,7 +2283,7 @@ export default {
         tooltip: {
           trigger: 'axis',
           axisPointer: {
-            type: 'cross'
+            type: 'none'
           },
           formatter: function(params) {
             let result = `Episode ${params[0].axisValue}<br/>`
@@ -2195,6 +2324,11 @@ export default {
       }
       
       console.log('设置图表选项:', option)
+      
+      // 清除之前的渲染状态，防止虚线残留
+      realtimeChartInstance.value.clear()
+      
+      // 设置新的图表选项
       realtimeChartInstance.value.setOption(option, true)
       console.log('图表选项设置完成')
     }
@@ -2215,14 +2349,23 @@ export default {
         clearInterval(refreshTimer.value)
       }
       
-      if (selectedEnvironment.value) {
+      // 在训练期间或选择了环境时启动自动刷新
+      if (isTraining.value || selectedEnvironment.value) {
         refreshTimer.value = setInterval(async () => {
           try {
-            const res = await fetch(`/api/training-metrics/${selectedEnvironment.value}`)
-            const result = await res.json()
-            if (result.success) {
-              trainingMetrics.value = result.metrics
-              updateRealtimeChart()
+            // 如果正在训练，先检查是否有新的CSV文件
+            if (isTraining.value) {
+              await loadAvailableMetricsFiles()
+            }
+            
+            // 如果有选择的环境，加载数据
+            if (selectedEnvironment.value) {
+              const res = await fetch(`/api/training-metrics/${selectedEnvironment.value}`)
+              const result = await res.json()
+              if (result.success) {
+                trainingMetrics.value = result.metrics
+                updateRealtimeChart()
+              }
             }
           } catch (error) {
             console.error('自动刷新数据失败:', error)
@@ -2277,17 +2420,23 @@ export default {
           }
         }
         
-        // 延迟重新初始化，确保DOM完全渲染
+        // 使用多层延迟重新初始化，避免 ResizeObserver 错误
         setTimeout(() => {
-          console.log('开始强制初始化图表')
-          initRealtimeChart()
-          
-          // 如果有数据，立即更新图表
-          if (trainingMetrics.value.length > 0) {
-            console.log('有数据，立即更新图表')
-            updateRealtimeChart()
-          }
-        }, 300)
+          requestAnimationFrame(() => {
+            setTimeout(() => {
+              console.log('开始强制初始化图表')
+              initRealtimeChart()
+              
+              // 如果有数据，延迟更新图表
+              if (trainingMetrics.value.length > 0) {
+                setTimeout(() => {
+                  console.log('有数据，更新图表')
+                  updateRealtimeChart()
+                }, 200)
+              }
+            }, 100)
+          })
+        }, 500)
       }
     })
     const addChart = () => {
@@ -2323,19 +2472,22 @@ export default {
       await loadAvailableMetricsFiles()
       console.log('loadAvailableMetricsFiles 完成')
       
-      // 使用更长的延迟确保DOM完全渲染
-      setTimeout(() => {
-        console.log('开始初始化图表和数据加载')
-        initRealtimeChart()
-        
-        // 如果有可用的指标文件，自动加载数据
-        if (availableMetricsFiles.value.length > 0) {
-          console.log('有可用文件，开始加载数据')
+      // 等待DOM完全渲染
+      await nextTick()
+      
+      // 直接初始化图表，让 initRealtimeChart 自己处理容器检查
+      console.log('开始初始化图表')
+      initRealtimeChart()
+      
+      // 如果有可用的指标文件，自动加载数据
+      if (availableMetricsFiles.value.length > 0) {
+        console.log('有可用文件，开始加载数据')
+        setTimeout(() => {
           loadMetricsData()
-        } else {
-          console.log('没有可用文件')
-        }
-      }, 800)
+        }, 500)
+      } else {
+        console.log('没有可用文件')
+      }
     }
     
     const updateCharts = () => {
@@ -2447,6 +2599,8 @@ export default {
       backupList,
       syntaxHighlight,
       isResetSupported,
+      isEditing,
+      originalContent,
       loadAllConfigs,
       loadFileContent,
       onFileTabClick,
@@ -2462,6 +2616,11 @@ export default {
       languageClass,
       getLanguageClass,
       highlightedCode,
+      onCodeChange,
+      onCodeKeydown,
+      onTextareaScroll,
+      startEditing,
+      cancelEditing,
       onConfigAlgorithmChange,
       onConfigGameChange,
       syncTrainingFormFromConstants,
@@ -2791,6 +2950,68 @@ export default {
 }
 
 .syntax-highlight-editor {
+  position: relative;
+  background: #2d3748;
+  border: 1px solid #4a5568;
+  border-radius: 6px;
+  font-family: 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.6;
+  height: 400px;
+  overflow: hidden;
+}
+
+.syntax-highlight-editor pre {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 16px;
+  background: transparent;
+  color: #e2e8f0;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  white-space: pre;
+  word-wrap: normal;
+  overflow: auto;
+  z-index: 1;
+  box-sizing: border-box;
+}
+
+.syntax-highlight-editor code {
+  background: transparent !important;
+  color: inherit;
+  font-family: inherit;
+}
+
+.code-textarea-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  padding: 16px;
+  margin: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: transparent;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  resize: none;
+  caret-color: #e2e8f0;
+  z-index: 2;
+  box-sizing: border-box;
+  overflow: auto;
+  white-space: pre;
+  word-wrap: normal;
+}
+
+.syntax-highlight-editor {
   background: #2d3748;
   border: 1px solid #4a5568;
   border-radius: 6px;
@@ -2817,15 +3038,20 @@ export default {
   font-family: inherit;
 }
 
-/* Prism.js 主题样式覆盖 */
+/* Prism.js 主题样式覆盖 - 适用于可编辑和只读编辑器 */
 .syntax-highlight-editor .token.comment,
 .syntax-highlight-editor .token.prolog,
 .syntax-highlight-editor .token.doctype,
-.syntax-highlight-editor .token.cdata {
+.syntax-highlight-editor .token.cdata,
+.code-highlight-overlay .token.comment,
+.code-highlight-overlay .token.prolog,
+.code-highlight-overlay .token.doctype,
+.code-highlight-overlay .token.cdata {
   color: #68d391;
 }
 
-.syntax-highlight-editor .token.punctuation {
+.syntax-highlight-editor .token.punctuation,
+.code-highlight-overlay .token.punctuation {
   color: #e2e8f0;
 }
 
@@ -2835,7 +3061,14 @@ export default {
 .syntax-highlight-editor .token.number,
 .syntax-highlight-editor .token.constant,
 .syntax-highlight-editor .token.symbol,
-.syntax-highlight-editor .token.deleted {
+.syntax-highlight-editor .token.deleted,
+.code-highlight-overlay .token.property,
+.code-highlight-overlay .token.tag,
+.code-highlight-overlay .token.boolean,
+.code-highlight-overlay .token.number,
+.code-highlight-overlay .token.constant,
+.code-highlight-overlay .token.symbol,
+.code-highlight-overlay .token.deleted {
   color: #f687b3;
 }
 
@@ -2844,7 +3077,13 @@ export default {
 .syntax-highlight-editor .token.string,
 .syntax-highlight-editor .token.char,
 .syntax-highlight-editor .token.builtin,
-.syntax-highlight-editor .token.inserted {
+.syntax-highlight-editor .token.inserted,
+.code-highlight-overlay .token.selector,
+.code-highlight-overlay .token.attr-name,
+.code-highlight-overlay .token.string,
+.code-highlight-overlay .token.char,
+.code-highlight-overlay .token.builtin,
+.code-highlight-overlay .token.inserted {
   color: #fbb6ce;
 }
 
@@ -2852,18 +3091,28 @@ export default {
 .syntax-highlight-editor .token.entity,
 .syntax-highlight-editor .token.url,
 .syntax-highlight-editor .language-css .token.string,
-.syntax-highlight-editor .style .token.string {
+.syntax-highlight-editor .style .token.string,
+.code-highlight-overlay .token.operator,
+.code-highlight-overlay .token.entity,
+.code-highlight-overlay .token.url,
+.code-highlight-overlay .language-css .token.string,
+.code-highlight-overlay .style .token.string {
   color: #f6ad55;
 }
 
 .syntax-highlight-editor .token.atrule,
 .syntax-highlight-editor .token.attr-value,
-.syntax-highlight-editor .token.keyword {
+.syntax-highlight-editor .token.keyword,
+.code-highlight-overlay .token.atrule,
+.code-highlight-overlay .token.attr-value,
+.code-highlight-overlay .token.keyword {
   color: #63b3ed;
 }
 
 .syntax-highlight-editor .token.function,
-.syntax-highlight-editor .token.class-name {
+.syntax-highlight-editor .token.class-name,
+.code-highlight-overlay .token.function,
+.code-highlight-overlay .token.class-name {
   color: #68d391;
 }
 

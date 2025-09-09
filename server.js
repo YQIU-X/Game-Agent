@@ -1745,29 +1745,16 @@ app.post('/api/config-manager/reset', (req, res) => {
       });
     }
     
-    // 从原始super-mario-bros-dqn文件夹恢复
+    // 从原始备份恢复
+    const originalDir = path.join(__dirname, 'backups', `${algorithm.toUpperCase()}_${game.charAt(0).toUpperCase() + game.slice(1)}_Original`);
     let sourcePath;
-    if (algorithm.toLowerCase() === 'dqn' && game.toLowerCase() === 'mario') {
-      if (fileType === 'constants') {
-        sourcePath = path.join(__dirname, 'super-mario-bros-dqn/core/constants.py');
-      } else if (fileType === 'wrappers') {
-        sourcePath = path.join(__dirname, 'super-mario-bros-dqn/core/wrappers.py');
-      } else if (fileType === 'model') {
-        sourcePath = path.join(__dirname, 'super-mario-bros-dqn/core/model.py');
-      } else if (fileType === 'replay_buffer') {
-        sourcePath = path.join(__dirname, 'super-mario-bros-dqn/core/replay_buffer.py');
-      } else if (fileType === 'helpers') {
-        sourcePath = path.join(__dirname, 'super-mario-bros-dqn/core/helpers.py');
-      } else if (fileType === 'trainer') {
-        // trainer文件没有原始版本，使用当前版本作为默认
-        sourcePath = filePath;
-      } else if (fileType === 'script') {
-        // script文件没有原始版本，使用当前版本作为默认
-        sourcePath = filePath;
-      }
+    
+    if (category === 'algorithm') {
+      sourcePath = path.join(originalDir, 'algorithm', `${fileType}.py`);
+    } else if (category === 'game') {
+      sourcePath = path.join(originalDir, 'game', `${fileType}.py`);
     } else {
-      // 对于其他算法和游戏，使用当前版本作为默认
-      sourcePath = filePath;
+      sourcePath = filePath; // 使用当前版本作为默认
     }
     
     if (sourcePath && fs.existsSync(sourcePath)) {

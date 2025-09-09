@@ -18,6 +18,7 @@ sys.path.insert(0, project_root)
 
 from python.algorithms.dqn import DQNTrainer
 from python.algorithms.dqn.core.constants import *
+from python.games.mario.core.constants import DEFAULT_ENVIRONMENT, DEFAULT_ACTION_SPACE
 
 
 def parse_args():
@@ -25,9 +26,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description='DQN训练脚本')
     
     # 环境参数
-    parser.add_argument('--environment', type=str, default=ENVIRONMENT,
+    parser.add_argument('--environment', type=str, default=DEFAULT_ENVIRONMENT,
                        help='环境名称')
-    parser.add_argument('--action-space', type=str, default=ACTION_SPACE,
+    parser.add_argument('--action-space', type=str, default=DEFAULT_ACTION_SPACE,
                        choices=['simple', 'complex', 'right_only'],
                        help='动作空间')
     

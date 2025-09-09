@@ -5,7 +5,7 @@
 Mario游戏配置常量
 """
 
-# 游戏环境
+# 游戏环境列表
 MARIO_ENVIRONMENTS = [
     'SuperMarioBros-1-1-v0',
     'SuperMarioBros-1-2-v0',
@@ -23,7 +23,7 @@ MARIO_ENVIRONMENTS = [
 # 默认环境
 DEFAULT_ENVIRONMENT = 'SuperMarioBros-1-1-v0'
 
-# 动作空间
+# 动作空间定义
 ACTION_SPACES = {
     'simple': 'SIMPLE_MOVEMENT',
     'complex': 'COMPLEX_MOVEMENT',
@@ -45,25 +45,6 @@ FLAG_REWARD = 350.0
 DEATH_PENALTY = -50.0
 REWARD_SCALE = 10.0
 
-# 训练参数
+# 游戏控制参数
 MAX_STEPS_PER_EPISODE = 10000
 RENDER_FPS = 30
-
-# DQN算法参数
-ACTION_SPACE = 'complex'
-BATCH_SIZE = 32
-BETA_FRAMES = 10000
-BETA_START = 0.4
-ENVIRONMENT = 'SuperMarioBros-3-3-v0'
-EPSILON_START = 1.0
-EPSILON_FINAL = 0.01
-EPSILON_DECAY = 100000
-GAMMA = 0.99
-INITIAL_LEARNING = 10000
-LEARNING_RATE = 1e-4
-MEMORY_CAPACITY = 20000
-NUM_EPISODES = 50000
-PRETRAINED_MODELS = 'pretrained_models'
-TEMP_MODELS = 'temp_models'
-TARGET_UPDATE_FREQUENCY = 1000
-TRANSFER = 'SuperMarioBros-1-1-v0'
