@@ -30,6 +30,14 @@
               <el-icon><TrendCharts /></el-icon>
               <span>训练可视化</span>
             </el-menu-item>
+            <el-menu-item index="config">
+              <el-icon><Setting /></el-icon>
+              <span>参数配置</span>
+            </el-menu-item>
+            <el-menu-item index="visualization">
+              <el-icon><TrendCharts /></el-icon>
+              <span>训练可视化</span>
+            </el-menu-item>
             <el-menu-item index="preview">
               <el-icon><Monitor /></el-icon>
               <span>训练预览</span>
@@ -40,7 +48,10 @@
         <el-main>
           <!-- 通用训练控制 -->
           <div v-if="activeMenu === 'training'" class="training-section training-scrollable">
+          <!-- 通用训练控制 -->
+          <div v-if="activeMenu === 'training'" class="training-section training-scrollable">
             <div class="section-header">
+              <h3>强化学习训练控制</h3>
               <h3>强化学习训练控制</h3>
               <div class="section-actions">
                 <el-button 
@@ -50,6 +61,7 @@
                   :loading="isTraining"
                 >
                   {{ isTraining ? '训练中...' : `开始${selectedAlgorithm}训练` }}
+                  {{ isTraining ? '训练中...' : `开始${selectedAlgorithm}训练` }}
                 </el-button>
                 <el-button 
                   type="danger" 
@@ -57,6 +69,20 @@
                   :disabled="!isTraining"
                 >
                   停止训练
+                </el-button>
+                <el-button 
+                  type="warning"
+                  @click="resetTrainingConfig"
+                  :disabled="isTraining"
+                >
+                  重置配置
+                </el-button>
+                <el-button 
+                  type="success"
+                  @click="syncConstantsFromTrainingForm"
+                  :disabled="isTraining"
+                >
+                  保存到配置文件
                 </el-button>
                 <el-button 
                   type="warning"
@@ -277,11 +303,63 @@
               </template>
               
               <div class="log-container">
+              </template>
+              
+              <el-form :model="trainingForm" label-width="120px" :disabled="isTraining">
+                <el-row :gutter="20">
+                  <el-col :span="8">
+                    <el-form-item label="启用渲染">
+                      <el-switch v-model="trainingForm.render" />
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="保存模型">
+                      <el-switch v-model="trainingForm.save_model" />
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="使用GPU">
+                      <el-switch v-model="trainingForm.use_gpu" />
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+                
+                <el-row :gutter="20">
+                  <el-col :span="8">
+                    <el-form-item label="详细输出">
+                      <el-switch v-model="trainingForm.verbose" />
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="模型保存频率">
+                      <el-input-number v-model="trainingForm.save_frequency" :min="10" :max="1000" :step="10" />
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="日志输出频率">
+                      <el-input-number v-model="trainingForm.log_frequency" :min="1" :max="100" :step="1" />
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+              </el-form>
+            </el-card>
+            
+            <!-- 训练日志 -->
+            <el-card class="training-logs">
+              <template #header>
+                <div class="card-header">
+                  <span>训练日志</span>
+                  <el-button type="text" @click="clearLogs" size="small">清空</el-button>
+                </div>
+              </template>
+              
+              <div class="log-container">
                 <div v-for="(log, index) in trainingLogs" :key="index" class="log-entry">
                   {{ log }}
                 </div>
                 <div v-if="trainingLogs.length === 0" class="empty-logs">
                   暂无日志信息
+                </div>
                 </div>
                 </div>
               </el-card>
@@ -533,6 +611,14 @@
                   :disabled="!isTraining"
                 />
               </div>
+              <div class="section-actions">
+                <el-switch
+                  v-model="enableRender"
+                  active-text="启用渲染"
+                  inactive-text="禁用渲染"
+                  :disabled="!isTraining"
+                />
+              </div>
             </div>
             
             <el-empty v-if="!isTraining" description="当前没有训练进行中，请先开始训练">
@@ -540,6 +626,7 @@
             </el-empty>
             
             <div v-else class="preview-container">
+              <div v-if="!enableRender" class="preview-placeholder">
               <div v-if="!enableRender" class="preview-placeholder">
                 <el-icon class="preview-icon"><VideoPlay /></el-icon>
                 <p>训练预览区域</p>
@@ -647,9 +734,16 @@
 
 <script>
 import { ref, computed, onBeforeUnmount, onMounted, nextTick, watch } from 'vue'
+import { ref, computed, onBeforeUnmount, onMounted, nextTick, watch } from 'vue'
 import { useStore } from 'vuex'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import * as echarts from 'echarts'
+import Prism from 'prismjs'
+import 'prismjs/themes/prism-tomorrow.css'
+import 'prismjs/components/prism-python'
+import 'prismjs/components/prism-javascript'
+import 'prismjs/components/prism-json'
 import * as echarts from 'echarts'
 import Prism from 'prismjs'
 import 'prismjs/themes/prism-tomorrow.css'
@@ -1083,6 +1177,7 @@ export default {
         return
       }
       
+      
       try {
         const res = await fetch(`/api/config-manager/${selectedAlgorithm.value.toLowerCase()}/${selectedGame.value.toLowerCase()}`)
         const result = await res.json()
@@ -1240,6 +1335,150 @@ export default {
           {
           confirmButtonText: '确定',
           cancelButtonText: '取消',
+            type: 'warning'
+          }
+        )
+        
+        const res = await fetch('/api/config-manager/reset-to-original', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            algorithm: selectedAlgorithm.value.toLowerCase(),
+            game: selectedGame.value.toLowerCase(),
+            fileType: currentFileInfo.value.type,
+            category: currentFileInfo.value.category
+          })
+        })
+        
+        const result = await res.json()
+        
+        if (result.success) {
+          ElMessage.success('文件已重置为原始状态')
+          // 重新加载配置
+          await loadAllConfigs()
+          
+          // 如果重置的是constants.py文件，同步更新训练控制参数
+          if (currentFileInfo.value.type === 'constants' && currentFileInfo.value.category === 'algorithm') {
+            await syncTrainingFormFromConstants()
+          }
+        } else {
+          ElMessage.error(result.message || '重置为原始状态失败')
+        }
+      } catch (error) {
+        if (error !== 'cancel') {
+          console.error('重置为原始状态失败:', error)
+          ElMessage.error('重置为原始状态失败')
+        }
+      }
+    }
+    
+    const refreshBackups = async () => {
+      if (!currentFileInfo.value) return
+      
+      try {
+        const res = await fetch(`/api/config-manager/backups/${selectedAlgorithm.value.toLowerCase()}/${selectedGame.value.toLowerCase()}/${currentFileInfo.value.type}`)
+        const result = await res.json()
+        
+        if (result.success) {
+          backupList.value = result.backups
+        } else {
+          ElMessage.error(result.message || '获取备份列表失败')
+        }
+      } catch (error) {
+        console.error('获取备份列表失败:', error)
+        ElMessage.error('获取备份列表失败')
+      }
+    }
+    
+    const restoreBackup = async (backup) => {
+      try {
+        await ElMessageBox.confirm(
+          `确定要恢复备份 "${backup.filename}" 吗？这将覆盖当前文件内容。`,
+          '恢复备份确认',
+          {
+            confirmButtonText: '确定',
+            cancelButtonText: '取消',
+            type: 'warning'
+          }
+        )
+        
+        const res = await fetch('/api/config-manager/restore', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            algorithm: selectedAlgorithm.value.toLowerCase(),
+            game: selectedGame.value.toLowerCase(),
+            fileType: currentFileInfo.value.type,
+            category: currentFileInfo.value.category,
+            backupPath: backup.path
+          })
+        })
+        
+        const result = await res.json()
+        
+        if (result.success) {
+          ElMessage.success('备份恢复成功')
+          // 重新加载配置
+          await loadAllConfigs()
+          await refreshBackups()
+        } else {
+          ElMessage.error(result.message || '恢复备份失败')
+        }
+      } catch (error) {
+        if (error !== 'cancel') {
+          console.error('恢复备份失败:', error)
+          ElMessage.error('恢复备份失败')
+        }
+      }
+    }
+    
+    const deleteBackup = async (backup) => {
+      try {
+        await ElMessageBox.confirm(
+          `确定要删除备份 "${backup.filename}" 吗？此操作不可恢复。`,
+          '删除备份确认',
+          {
+            confirmButtonText: '确定',
+            cancelButtonText: '取消',
+            type: 'warning'
+          }
+        )
+        
+        const res = await fetch('/api/config-manager/delete-backup', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            backupPath: backup.path
+          })
+        })
+        
+        const result = await res.json()
+        
+        if (result.success) {
+          ElMessage.success('备份删除成功')
+          await refreshBackups()
+        } else {
+          ElMessage.error(result.message || '删除备份失败')
+        }
+      } catch (error) {
+        if (error !== 'cancel') {
+          console.error('删除备份失败:', error)
+          ElMessage.error('删除备份失败')
+        }
+      }
+    }
+    
+    // 删除所有版本备份（保留原始备份）
+    const deleteAllBackups = async () => {
+      try {
+        if (!currentFileInfo.value) {
+          ElMessage.warning('没有可删除的备份')
             type: 'warning'
           }
         )
@@ -1902,6 +2141,24 @@ export default {
       ElMessageBox.confirm(
         `确定要开始${selectedAlgorithm.value}训练吗？\n算法: ${selectedAlgorithm.value}\n游戏: ${selectedGame.value}\n环境: ${trainingForm.value.environment}\n动作空间: ${trainingForm.value.action_space}\n训练轮数: ${trainingForm.value.episodes}`,
         `开始${selectedAlgorithm.value}训练`,
+        '确定要重置参数文件为默认值吗？这将覆盖当前内容。',
+        '重置确认',
+        {
+          confirmButtonText: '确定',
+          cancelButtonText: '取消',
+          type: 'warning'
+        }
+      ).then(() => {
+        loadConfigFile()
+        ElMessage.success('已重置为默认参数')
+      }).catch(() => { void 0 })
+    }
+    
+    // 训练控制
+    const startTraining = async () => {
+      ElMessageBox.confirm(
+        `确定要开始${selectedAlgorithm.value}训练吗？\n算法: ${selectedAlgorithm.value}\n游戏: ${selectedGame.value}\n环境: ${trainingForm.value.environment}\n动作空间: ${trainingForm.value.action_space}\n训练轮数: ${trainingForm.value.episodes}`,
+        `开始${selectedAlgorithm.value}训练`,
         {
           confirmButtonText: '确定',
           cancelButtonText: '取消',
@@ -1954,10 +2211,58 @@ export default {
           startLogPolling()
           
           ElMessage.success(`${selectedAlgorithm.value}训练已开始`)
+        try {
+          // 清空之前的日志和指标
+          trainingLogs.value = []
+          trainingMetrics.value = []
+          isTraining.value = true
+          
+          const payload = {
+            algorithm: selectedAlgorithm.value,
+            game: selectedGame.value,
+            environment: trainingForm.value.environment,
+            action_space: trainingForm.value.action_space,
+            episodes: trainingForm.value.episodes,
+            max_steps_per_episode: trainingForm.value.max_steps_per_episode,
+            save_frequency: trainingForm.value.save_frequency,
+            log_frequency: trainingForm.value.log_frequency,
+            render: trainingForm.value.render,
+            save_model: trainingForm.value.save_model,
+            use_gpu: trainingForm.value.use_gpu,
+            verbose: trainingForm.value.verbose
+          }
+          
+          // 添加算法特定参数
+          algorithmParameters.value.forEach(param => {
+            payload[param.name] = trainingForm.value[param.name]
+          })
+          
+          const res = await fetch('/api/start-training', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+          })
+          
+          const result = await res.json()
+          if (!result.success) {
+            throw new Error(result.message || '启动失败')
+          }
+          
+          currentProcessId.value = result.processId
+          trainingLogs.value.push(`[${new Date().toLocaleTimeString()}] ${selectedAlgorithm.value}训练已启动`)
+          
+          // 开始轮询日志
+          startLogPolling()
+          
+          ElMessage.success(`${selectedAlgorithm.value}训练已开始`)
           if (activeMenu.value !== 'training') {
             activeMenu.value = 'training'
           }
         } catch (e) {
+          isTraining.value = false
+          ElMessage.error(`启动${selectedAlgorithm.value}训练失败: ` + (e.message || '未知错误'))
           isTraining.value = false
           ElMessage.error(`启动${selectedAlgorithm.value}训练失败: ` + (e.message || '未知错误'))
         }
@@ -1966,6 +2271,7 @@ export default {
     
     const stopTraining = () => {
       ElMessageBox.confirm(
+        `确定要停止当前${selectedAlgorithm.value}训练吗？`,
         `确定要停止当前${selectedAlgorithm.value}训练吗？`,
         '停止训练',
         {
@@ -1977,8 +2283,13 @@ export default {
         try {
           if (currentProcessId.value) {
             await fetch(`/api/stop/${currentProcessId.value}`, { method: 'POST' })
+          if (currentProcessId.value) {
+            await fetch(`/api/stop/${currentProcessId.value}`, { method: 'POST' })
           }
         } catch (_) { void 0 }
+        isTraining.value = false
+        trainingLogs.value.push(`[${new Date().toLocaleTimeString()}] ${selectedAlgorithm.value}训练已手动停止`)
+        ElMessage.info(`${selectedAlgorithm.value}训练已停止`)
         isTraining.value = false
         trainingLogs.value.push(`[${new Date().toLocaleTimeString()}] ${selectedAlgorithm.value}训练已手动停止`)
         ElMessage.info(`${selectedAlgorithm.value}训练已停止`)
@@ -1986,6 +2297,7 @@ export default {
     }
     
     const clearLogs = () => {
+      trainingLogs.value = []
       trainingLogs.value = []
       ElMessage.info('日志已清空')
     }
@@ -2544,9 +2856,14 @@ export default {
       onAlgorithmChange,
       onGameChange,
       resetTrainingConfig,
+      onAlgorithmChange,
+      onGameChange,
+      resetTrainingConfig,
       loadConfigFile,
       loadScriptFile,
+      loadScriptFile,
       saveConfigFile,
+      resetConfigFile,
       resetConfigFile,
       startTraining,
       stopTraining,
@@ -2636,7 +2953,30 @@ export default {
 }
 
 .training-config {
+.training-config {
   margin-bottom: 20px;
+}
+
+.algorithm-config {
+  margin-top: 20px;
+  padding: 15px;
+  background-color: #f8f9fa;
+  border-radius: 4px;
+}
+
+.algorithm-config h4 {
+  margin: 0 0 15px 0;
+  color: #409EFF;
+}
+
+.training-logs {
+  margin-top: 20px;
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
 .algorithm-config {
@@ -2669,6 +3009,7 @@ export default {
   color: #f0f0f0;
   font-family: monospace;
   border-radius: 4px;
+  border-radius: 4px;
 }
 
 .log-entry {
@@ -2681,6 +3022,56 @@ export default {
   text-align: center;
   color: #909399;
   padding: 20px;
+}
+
+.no-data {
+  text-align: center;
+  padding: 40px;
+}
+
+.charts-container {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.chart-card {
+  grid-column: span 1;
+}
+
+.stats-card {
+  grid-column: span 2;
+}
+
+.chart-container {
+  height: 300px;
+  width: 100%;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 20px;
+  padding: 20px;
+}
+
+.stat-item {
+  text-align: center;
+  padding: 20px;
+  background-color: #f8f9fa;
+  border-radius: 8px;
+}
+
+.stat-value {
+  font-size: 24px;
+  font-weight: bold;
+  color: #409EFF;
+  margin-bottom: 8px;
+}
+
+.stat-label {
+  color: #606266;
+  font-size: 14px;
 }
 
 .no-data {
