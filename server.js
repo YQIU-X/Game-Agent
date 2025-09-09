@@ -8,7 +8,7 @@ const WebSocket = require('ws');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const PYTHON_BIN = process.env.PYTHON_BIN || 'python';
+const PYTHON_BIN = process.env.PYTHON_BIN || 'C:\\ProgramData\\anaconda3\\envs\\smdqn\\python.exe';
 
 // 中间件
 app.use(cors());
@@ -342,27 +342,10 @@ app.post('/api/sync-models', (req, res) => {
 // 列举本地可用模型文件
 app.get('/api/models', (req, res) => {
   try {
-    const models = [];
-    
-    // 扫描新的目录结构
-    const marioDqnDir = path.join(__dirname, 'pretrained_models', 'mario', 'dqn');
-    if (fs.existsSync(marioDqnDir)) {
-      const files = fs.readdirSync(marioDqnDir).filter(f => f.endsWith('.dat') || f.endsWith('.pth'));
-      files.forEach(file => {
-        models.push(`pretrained_models/mario/dqn/${file}`);
-      });
-    }
-    
-    // 扫描其他可能的目录
-    const oldDir = path.join(__dirname, 'pretrained_models');
-    if (fs.existsSync(oldDir)) {
-      const files = fs.readdirSync(oldDir).filter(f => f.endsWith('.dat') || f.endsWith('.pth'));
-      files.forEach(file => {
-        models.push(file);
-      });
-    }
-    
-    res.json({ success: true, models });
+    const destDir = path.join(__dirname, 'pretrained_models');
+    if (!fs.existsSync(destDir)) return res.json({ success: true, models: [] });
+    const files = fs.readdirSync(destDir).filter(f => f.endsWith('.dat') || f.endsWith('.pth'));
+    res.json({ success: true, models: files });
   } catch (error) {
     res.status(500).json({ success: false, message: '读取失败: ' + error.message });
   }
@@ -418,7 +401,7 @@ app.post('/api/start-stream', (req, res) => {
     return res.status(400).json({ success: false, message: '缺少必要参数 level' });
   }
   // 根据是否提供权重，选择纯渲染或推理渲染
-  const scriptPath = weights ? path.join(__dirname, 'python/scripts/agent_inference.py') : path.join(__dirname, 'render_stream.py');
+  const scriptPath = weights ? path.join(__dirname, 'infer_stream.py') : path.join(__dirname, 'render_stream.py');
   const args = [scriptPath, '--env', level];
   if (weights) args.push('--weights', weights);
   if (fps) args.push('--fps', String(fps));
@@ -500,7 +483,7 @@ app.post('/api/start-player', (req, res) => {
     }
   });
   
-  const scriptPath = path.join(__dirname, 'python/scripts/player_control.py');
+  const scriptPath = path.join(__dirname, 'player_control.py');
   const args = [scriptPath, '--env', level];
   if (actionSpace) args.push('--action-space', actionSpace);
   if (fps) args.push('--fps', String(fps));
