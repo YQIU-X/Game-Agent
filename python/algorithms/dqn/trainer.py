@@ -97,8 +97,12 @@ class DQNTrainer:
             action_space: 动作空间
         """
         # 获取动作空间
-        if action_space in ACTION_SPACES:
-            action_space_obj = globals()[ACTION_SPACES[action_space]]
+        if action_space == 'simple':
+            action_space_obj = SIMPLE_MOVEMENT
+        elif action_space == 'complex':
+            action_space_obj = COMPLEX_MOVEMENT
+        elif action_space == 'right_only':
+            action_space_obj = RIGHT_ONLY
         else:
             action_space_obj = COMPLEX_MOVEMENT
             
@@ -221,10 +225,10 @@ class DQNTrainer:
             render: 是否渲染
             save_path: 模型保存路径
         """
-        print(f"Starting DQN training for {num_episodes} episodes")
-        print(f"Device: {self.device}")
-        print(f"Environment: {self.config.get('environment', 'Unknown')}")
-        print(f"Action Space: {self.config.get('action_space', 'Unknown')}")
+        print(f"Starting DQN training for {num_episodes} episodes", flush=True)
+        print(f"Device: {self.device}", flush=True)
+        print(f"Environment: {self.config.get('environment', 'Unknown')}", flush=True)
+        print(f"Action Space: {self.config.get('action_space', 'Unknown')}", flush=True)
         
         start_time = time.time()
         
@@ -274,31 +278,35 @@ class DQNTrainer:
             # 日志输出 - 参考示例代码的格式
             if episode % self.log_frequency == 0:
                 elapsed_time = time.time() - start_time
-                print(f'Episode {episode} - Reward: {round(episode_reward, 3)}, '
-                      f'Best: {round(self.best_reward, 3)}, Average: {round(avg_reward, 3)}, '
-                      f'Epsilon: {round(self.epsilon, 4)}')
+                log_message = f'Episode {episode} - Reward: {round(episode_reward, 3)}, ' \
+                             f'Best: {round(self.best_reward, 3)}, Average: {round(avg_reward, 3)}, ' \
+                             f'Epsilon: {round(self.epsilon, 4)}'
+                print(log_message, flush=True)
                 
                 # 如果达到新的最佳平均奖励，保存模型
                 if avg_reward == self.best_average and episode > 0:
-                    print(f'New best average reward of {round(self.best_average, 3)}! Saving model')
+                    best_message = f'New best average reward of {round(self.best_average, 3)}! Saving model'
+                    print(best_message, flush=True)
                     if save_path:
                         model_path = os.path.join(save_path, f"dqn_model_best_avg.pth")
                         save_model(self.model, model_path)
-                        print(f"Best average model saved to: {model_path}")
+                        save_message = f"Best average model saved to: {model_path}"
+                        print(save_message, flush=True)
             
             # 保存模型
             if save_path and episode % self.save_frequency == 0:
                 model_path = os.path.join(save_path, f"dqn_model_episode_{episode}.pth")
                 save_model(self.model, model_path)
-                print(f"Model saved to: {model_path}")
+                save_message = f"Model saved to: {model_path}"
+                print(save_message, flush=True)
         
-        print("Training completed!")
+        print("Training completed!", flush=True)
         
         # 保存最终模型
         if save_path:
             final_model_path = os.path.join(save_path, "dqn_model_final.pth")
             save_model(self.model, final_model_path)
-            print(f"Final model saved to: {final_model_path}")
+            print(f"Final model saved to: {final_model_path}", flush=True)
 
 
 def parse_args():
@@ -347,7 +355,7 @@ def parse_args():
                        help='强制使用CPU')
     parser.add_argument('--save-path', type=str, default='models',
                        help='模型保存路径')
-    parser.add_argument('--log-frequency', type=int, default=10,
+    parser.add_argument('--log-frequency', type=int, default=1,
                        help='日志输出频率')
     parser.add_argument('--save-frequency', type=int, default=100,
                        help='模型保存频率')

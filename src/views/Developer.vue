@@ -432,46 +432,56 @@
               </div>
             </div>
             
-            <!-- 指标选择器 -->
-            <div v-if="hasTrainingData" class="metrics-selector">
-              <h4>选择要可视化的指标：</h4>
-              <div class="metrics-checkboxes">
-                <el-checkbox-group v-model="selectedMetrics" @change="updateCharts">
-                  <el-checkbox label="total_reward">总奖励</el-checkbox>
-                  <el-checkbox label="best_reward">最佳奖励</el-checkbox>
-                  <el-checkbox label="best_average">最佳平均奖励</el-checkbox>
-                  <el-checkbox label="epsilon">Epsilon值</el-checkbox>
-                  <el-checkbox label="average_loss">平均损失</el-checkbox>
-                </el-checkbox-group>
+            <!-- 实时图表控制面板 -->
+            <div v-if="hasTrainingData" class="realtime-controls">
+              <div class="metrics-selector">
+                <h4>选择要显示的指标：</h4>
+                <div class="metrics-checkboxes">
+                  <el-checkbox-group v-model="selectedMetrics" @change="updateRealtimeChart">
+                    <el-checkbox label="total_reward">总奖励</el-checkbox>
+                    <el-checkbox label="best_reward">最佳奖励</el-checkbox>
+                    <el-checkbox label="best_average">最佳平均奖励</el-checkbox>
+                    <el-checkbox label="epsilon">Epsilon值</el-checkbox>
+                    <el-checkbox label="average_loss">平均损失</el-checkbox>
+                  </el-checkbox-group>
+                </div>
+              </div>
+              
+              <div class="chart-controls">
+                <el-button-group>
+                  <el-button :type="chartType === 'line' ? 'primary' : ''" @click="chartType = 'line'; updateRealtimeChart()">折线图</el-button>
+                  <el-button :type="chartType === 'bar' ? 'primary' : ''" @click="chartType = 'bar'; updateRealtimeChart()">柱状图</el-button>
+                  <el-button :type="chartType === 'scatter' ? 'primary' : ''" @click="chartType = 'scatter'; updateRealtimeChart()">散点图</el-button>
+                </el-button-group>
+                
+                <el-switch v-model="autoRefresh" active-text="自动刷新" inactive-text="手动刷新" style="margin-left: 20px;" />
+                <span v-if="autoRefresh" class="refresh-interval">
+                  刷新间隔: 
+                  <el-select v-model="refreshInterval" style="width: 80px;">
+                    <el-option label="1秒" :value="1000"></el-option>
+                    <el-option label="2秒" :value="2000"></el-option>
+                    <el-option label="5秒" :value="5000"></el-option>
+                    <el-option label="10秒" :value="10000"></el-option>
+                  </el-select>
+                </span>
               </div>
             </div>
             
-            <div v-if="!isTraining && !hasTrainingData" class="no-data">
-              <el-empty description="暂无训练数据，请先开始训练">
-                <el-button type="primary" @click="activeMenu = 'training'">去训练</el-button>
-              </el-empty>
-            </div>
-            
-            <div v-else class="charts-container">
-              <!-- 动态图表容器 -->
-              <el-card v-for="chart in activeCharts" :key="chart.id" class="chart-card">
+            <!-- 实时图表显示区域 -->
+            <div v-if="hasTrainingData" class="realtime-chart-container">
+              <el-card class="main-chart-card">
                 <template #header>
-                  <div class="card-header">
-                    <span>{{ chart.title }}</span>
-                    <el-button type="text" @click="removeChart(chart.id)" style="float: right;">移除</el-button>
+                  <div class="chart-header">
+                    <span>训练指标实时监控</span>
+                    <div class="chart-stats">
+                      <span v-if="trainingMetrics.length > 0">
+                        当前Episode: {{ trainingMetrics.length - 1 }} | 
+                        最新奖励: {{ trainingMetrics[trainingMetrics.length - 1]?.total_reward?.toFixed(2) || 0 }}
+                      </span>
+                    </div>
                   </div>
                 </template>
-                <div :ref="`chart_${chart.id}`" class="chart-container"></div>
-              </el-card>
-              
-              <!-- 添加图表按钮 -->
-              <el-card v-if="activeCharts.length < 3" class="add-chart-card">
-                <div class="add-chart-content">
-                  <el-button type="primary" @click="showAddChartDialog = true" :disabled="selectedMetrics.length === 0">
-                    <el-icon><Plus /></el-icon>
-                    添加图表
-                  </el-button>
-                </div>
+                <div ref="realtimeChart" class="realtime-chart"></div>
               </el-card>
               
               <!-- 训练统计 -->
@@ -500,6 +510,16 @@
                   </div>
                 </div>
               </el-card>
+            </div>
+            
+            <!-- 无数据提示 -->
+            <div v-else class="no-data-tip">
+              <el-empty description="暂无训练数据">
+                <template #image>
+                  <el-icon size="100" color="#c0c4cc"><TrendCharts /></el-icon>
+                </template>
+                <el-button type="primary" @click="loadMetricsData">加载数据</el-button>
+              </el-empty>
             </div>
           </div>
           
@@ -555,7 +575,7 @@
             <el-button type="danger" @click="deleteAllBackups" :disabled="backupList.length === 0">
               删除所有备份
             </el-button>
-          </div>
+  </div>
         </div>
         
         <el-table :data="backupList" style="width: 100%" max-height="400">
@@ -712,8 +732,12 @@ export default {
       type: 'line'
     })
     
-    // 图表实例映射
-    const chartInstances = ref(new Map())
+    // 实时图表相关
+    const realtimeChartInstance = ref(null)
+    const chartType = ref('line')
+    const autoRefresh = ref(true)
+    const refreshInterval = ref(2000)
+    const refreshTimer = ref(null)
     
     // 从store获取状态
     const username = computed(() => store.getters.username)
@@ -1967,14 +1991,183 @@ export default {
         const result = await res.json()
         if (result.success) {
           trainingMetrics.value = result.metrics
-          updateCharts()
+          updateRealtimeChart()
+          // 如果自动刷新开启，启动定时器
+          if (autoRefresh.value) {
+            startAutoRefresh()
+          }
         }
       } catch (error) {
         console.error('加载指标数据失败:', error)
       }
     }
     
-    // 添加图表
+    // 实时图表相关方法
+    const initRealtimeChart = () => {
+      nextTick(() => {
+        const chartEl = document.querySelector('[ref="realtimeChart"]')
+        if (chartEl && !realtimeChartInstance.value) {
+          realtimeChartInstance.value = echarts.init(chartEl)
+          updateRealtimeChart()
+        }
+      })
+    }
+    
+    const updateRealtimeChart = () => {
+      if (!realtimeChartInstance.value || trainingMetrics.value.length === 0) return
+      
+      const episodes = trainingMetrics.value.map((_, index) => index)
+      const series = []
+      
+      // 为每个选中的指标创建系列
+      selectedMetrics.value.forEach(metricKey => {
+        const data = trainingMetrics.value.map(m => m[metricKey] || 0)
+        const metricLabel = getMetricLabel(metricKey)
+        
+        series.push({
+          name: metricLabel,
+          type: chartType.value,
+          data: data,
+          smooth: chartType.value === 'line',
+          symbol: chartType.value === 'scatter' ? 'circle' : 'none',
+          symbolSize: chartType.value === 'scatter' ? 6 : 0,
+          lineStyle: {
+            width: 2
+          },
+          itemStyle: {
+            borderWidth: 1
+          }
+        })
+      })
+      
+      const option = {
+        title: {
+          text: '训练指标实时监控',
+          left: 'center',
+          textStyle: {
+            fontSize: 16,
+            fontWeight: 'bold'
+          }
+        },
+        tooltip: {
+          trigger: 'axis',
+          axisPointer: {
+            type: 'cross'
+          },
+          formatter: function(params) {
+            let result = `Episode ${params[0].axisValue}<br/>`
+            params.forEach(param => {
+              result += `${param.seriesName}: ${param.value.toFixed(2)}<br/>`
+            })
+            return result
+          }
+        },
+        legend: {
+          data: series.map(s => s.name),
+          top: 40,
+          type: 'scroll'
+        },
+        grid: {
+          left: '3%',
+          right: '4%',
+          bottom: '3%',
+          top: '15%',
+          containLabel: true
+        },
+        xAxis: {
+          type: 'category',
+          data: episodes,
+          name: 'Episode',
+          nameLocation: 'middle',
+          nameGap: 30
+        },
+        yAxis: {
+          type: 'value',
+          name: 'Value',
+          nameLocation: 'middle',
+          nameGap: 50
+        },
+        series: series,
+        animation: true,
+        animationDuration: 300
+      }
+      
+      realtimeChartInstance.value.setOption(option, true)
+    }
+    
+    const getMetricLabel = (metricKey) => {
+      const labels = {
+        'total_reward': '总奖励',
+        'best_reward': '最佳奖励',
+        'best_average': '最佳平均奖励',
+        'epsilon': 'Epsilon值',
+        'average_loss': '平均损失'
+      }
+      return labels[metricKey] || metricKey
+    }
+    
+    const startAutoRefresh = () => {
+      if (refreshTimer.value) {
+        clearInterval(refreshTimer.value)
+      }
+      
+      if (autoRefresh.value && selectedEnvironment.value) {
+        refreshTimer.value = setInterval(async () => {
+          try {
+            const res = await fetch(`/api/training-metrics/${selectedEnvironment.value}`)
+            const result = await res.json()
+            if (result.success) {
+              trainingMetrics.value = result.metrics
+              updateRealtimeChart()
+            }
+          } catch (error) {
+            console.error('自动刷新数据失败:', error)
+          }
+        }, refreshInterval.value)
+      }
+    }
+    
+    const stopAutoRefresh = () => {
+      if (refreshTimer.value) {
+        clearInterval(refreshTimer.value)
+        refreshTimer.value = null
+      }
+    }
+    
+    // 监听自动刷新开关
+    watch(autoRefresh, (newVal) => {
+      if (newVal) {
+        startAutoRefresh()
+      } else {
+        stopAutoRefresh()
+      }
+    })
+    
+    // 监听刷新间隔变化
+    watch(refreshInterval, () => {
+      if (autoRefresh.value) {
+        startAutoRefresh()
+      }
+    })
+    
+    // 监听训练状态变化
+    watch(isTraining, (newVal) => {
+      if (newVal && autoRefresh.value) {
+        startAutoRefresh()
+      } else if (!newVal) {
+        stopAutoRefresh()
+      }
+    })
+    
+    // 监听选中指标变化
+    watch(selectedMetrics, () => {
+      updateRealtimeChart()
+    })
+    
+    // 监听图表类型变化
+    watch(chartType, () => {
+      updateRealtimeChart()
+    })
     const addChart = () => {
       if (!newChart.value.title || newChart.value.metrics.length === 0) return
       
@@ -1996,85 +2189,28 @@ export default {
       }
       showAddChartDialog.value = false
       
-      // 初始化新图表
-      nextTick(() => {
-        initChart(chart)
-      })
+      // 实时图表系统会自动更新，无需手动初始化
     }
     
     // 移除图表
-    const removeChart = (chartId) => {
-      const index = activeCharts.value.findIndex(chart => chart.id === chartId)
-      if (index > -1) {
-        // 销毁图表实例
-        const chartInstance = chartInstances.value.get(chartId)
-        if (chartInstance) {
-          chartInstance.dispose()
-          chartInstances.value.delete(chartId)
-        }
-        
-        activeCharts.value.splice(index, 1)
-      }
-    }
-    
-    // 初始化单个图表
-    const initChart = (chart) => {
-      nextTick(() => {
-        const chartEl = document.querySelector(`[ref="chart_${chart.id}"]`)
-        if (chartEl && !chartInstances.value.has(chart.id)) {
-          const chartInstance = echarts.init(chartEl)
-          chartInstances.value.set(chart.id, chartInstance)
-          updateSingleChart(chart)
-        }
-      })
-    }
-    
-    // 更新单个图表
-    const updateSingleChart = (chart) => {
-      const chartInstance = chartInstances.value.get(chart.id)
-      if (!chartInstance || trainingMetrics.value.length === 0) return
-      
-      const episodes = trainingMetrics.value.map((_, index) => index)
-      const series = []
-      
-      chart.metrics.forEach(metricKey => {
-        const data = trainingMetrics.value.map(m => m[metricKey] || 0)
-        const metricLabel = availableMetricsForChart.value.find(m => m.value === metricKey)?.label || metricKey
-        
-        series.push({
-          name: metricLabel,
-          type: chart.type,
-          data: data,
-          smooth: chart.type === 'line'
-        })
-      })
-      
-      chartInstance.setOption({
-        title: { text: chart.title, left: 'center' },
-        tooltip: { trigger: 'axis' },
-        legend: { data: series.map(s => s.name), top: 30 },
-        xAxis: { type: 'category', data: episodes },
-        yAxis: { type: 'value' },
-        series: series
-      })
-    }
+    // 旧的图表方法已移除，现在使用实时图表系统
     
     // 图表相关
     const initCharts = () => {
       loadAvailableMetricsFiles()
+      // 初始化实时图表
+      initRealtimeChart()
     }
     
     const updateCharts = () => {
       if (trainingMetrics.value.length === 0) return
       
-      // 更新所有活动图表
-      activeCharts.value.forEach(chart => {
-        updateSingleChart(chart)
-      })
+      // 实时图表系统会自动更新
+      updateRealtimeChart()
     }
     
     const refreshCharts = () => {
-      updateCharts()
+      loadMetricsData()
     }
     
     const exportData = () => {
@@ -2123,11 +2259,12 @@ export default {
       if (logPollingInterval) {
         clearInterval(logPollingInterval)
       }
-      // 清理所有图表实例
-      chartInstances.value.forEach(chartInstance => {
-        chartInstance.dispose()
-      })
-      chartInstances.value.clear()
+      // 清理实时图表
+      if (realtimeChartInstance.value) {
+        realtimeChartInstance.value.dispose()
+      }
+      // 清理自动刷新定时器
+      stopAutoRefresh()
     })
 
     return {
@@ -2209,9 +2346,16 @@ export default {
       loadAvailableMetricsFiles,
       loadMetricsData,
       addChart,
-      removeChart,
-      initChart,
-      updateSingleChart
+      // 旧的图表方法已移除
+      // 实时图表相关
+      chartType,
+      autoRefresh,
+      refreshInterval,
+      updateRealtimeChart,
+      initRealtimeChart,
+      startAutoRefresh,
+      stopAutoRefresh,
+      getMetricLabel
     }
   }
 }
@@ -2674,5 +2818,99 @@ export default {
 .chart-container {
   height: 350px;
   width: 100%;
+}
+
+/* 实时图表样式 */
+.realtime-controls {
+  background: #f8f9fa;
+  padding: 20px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+}
+
+.metrics-selector h4 {
+  margin: 0 0 15px 0;
+  color: #303133;
+  font-size: 16px;
+}
+
+.metrics-checkboxes {
+  margin-bottom: 20px;
+}
+
+.chart-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 15px;
+}
+
+.refresh-interval {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #606266;
+  font-size: 14px;
+}
+
+.realtime-chart-container {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 20px;
+  margin-top: 20px;
+}
+
+.main-chart-card {
+  min-height: 500px;
+}
+
+.chart-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.chart-stats {
+  font-size: 14px;
+  color: #606266;
+}
+
+.realtime-chart {
+  height: 450px;
+  width: 100%;
+}
+
+.stats-card {
+  min-height: 500px;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.stat-item {
+  text-align: center;
+  padding: 20px;
+  background: #f8f9fa;
+  border-radius: 8px;
+}
+
+.stat-value {
+  font-size: 24px;
+  font-weight: bold;
+  color: #409EFF;
+  margin-bottom: 8px;
+}
+
+.stat-label {
+  font-size: 14px;
+  color: #606266;
+}
+
+.no-data-tip {
+  text-align: center;
+  padding: 60px 20px;
 }
 </style>
