@@ -61,29 +61,17 @@ class PrioritizedBuffer:
 
 
 class ReplayBuffer:
-    """简单的经验回放缓冲区"""
     def __init__(self, capacity):
         self._capacity = capacity
         self._buffer = deque(maxlen=capacity)
 
     def push(self, state, action, reward, next_state, done):
-        state = np.expand_dims(state, 0)
-        next_state = np.expand_dims(next_state, 0)
-        
-        batch = (state, action, reward, next_state, done)
-        self._buffer.append(batch)
+        self._buffer.append((state, action, reward, next_state, done))
 
     def sample(self, batch_size):
         batch = sample(self._buffer, batch_size)
-        batch = list(zip(*batch))
-        
-        states = np.concatenate(batch[0])
-        actions = batch[1]
-        rewards = batch[2]
-        next_states = np.concatenate(batch[3])
-        dones = batch[4]
-        
-        return states, actions, rewards, next_states, dones
+        state, action, reward, next_state, done = map(np.stack, zip(*batch))
+        return state, action, reward, next_state, done
 
     def __len__(self):
         return len(self._buffer)

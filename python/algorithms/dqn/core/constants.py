@@ -1,8 +1,16 @@
-ACTION_SPACE = "simple"
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+DQN算法配置常量
+"""
+
+# DQN算法参数
+ACTION_SPACE = "complex"
 BATCH_SIZE = 4
 BETA_FRAMES = 10000
 BETA_START = 0.4
-ENVIRONMENT = "SuperMarioBros-1-1-v0"
+ENVIRONMENT = "SuperMarioBros-3-3-v0"
 EPSILON_START = 1
 EPSILON_FINAL = 0.01
 EPSILON_DECAY = 100000
@@ -14,3 +22,22 @@ NUM_EPISODES = 50000
 PRETRAINED_MODELS = 'pretrained_models'
 TEMP_MODELS = 'temp_models'
 TARGET_UPDATE_FREQUENCY = 1000
+TRANSFER = 'SuperMarioBros-1-1-v0'
+
+# 网络结构参数
+INPUT_CHANNELS = 4
+HIDDEN_SIZE = 512
+OUTPUT_SIZE = 12  # complex movement action space
+
+# 训练控制参数
+SAVE_FREQUENCY = 100
+LOG_FREQUENCY = 10
+RENDER = False
+SAVE_MODEL = True
+USE_GPU = True
+VERBOSE = True
+
+# 文件路径
+CONFIG_DIR = 'configs'
+LOGS_DIR = 'logs'
+RESULTS_DIR = 'results'

@@ -1895,6 +1895,47 @@ app.post('/api/config-manager/create-original-backup', (req, res) => {
   }
 });
 
+// 获取渲染帧
+app.get('/api/render-frame', (req, res) => {
+  try {
+    const fs = require('fs');
+    const rendersDir = path.join(__dirname, 'python', 'renders');
+    
+    if (!fs.existsSync(rendersDir)) {
+      return res.status(404).json({ success: false, message: '渲染目录不存在' });
+    }
+    
+    // 获取最新的渲染文件
+    const files = fs.readdirSync(rendersDir)
+      .filter(file => file.endsWith('.jpg'))
+      .map(file => ({
+        name: file,
+        path: path.join(rendersDir, file),
+        mtime: fs.statSync(path.join(rendersDir, file)).mtime
+      }))
+      .sort((a, b) => b.mtime - a.mtime);
+    
+    if (files.length === 0) {
+      return res.status(404).json({ success: false, message: '没有可用的渲染帧' });
+    }
+    
+    const latestFile = files[0];
+    const imageBuffer = fs.readFileSync(latestFile.path);
+    const base64Image = imageBuffer.toString('base64');
+    
+    res.json({
+      success: true,
+      frame: `data:image/jpeg;base64,${base64Image}`,
+      filename: latestFile.name,
+      timestamp: latestFile.mtime
+    });
+    
+  } catch (error) {
+    console.error('获取渲染帧失败:', error);
+    res.status(500).json({ success: false, message: '获取渲染帧失败' });
+  }
+});
+
 // 重置为原始备份
 app.post('/api/config-manager/reset-to-original', (req, res) => {
   try {

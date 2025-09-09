@@ -10,9 +10,9 @@ import cv2
 import numpy as np
 from collections import deque
 from gym import ObservationWrapper, wrappers, Wrapper
-import gym_super_mario_bros
 from gym.spaces import Box
 from nes_py.wrappers import JoypadSpace
+import gym_super_mario_bros
 
 
 class FrameDownsample(ObservationWrapper):

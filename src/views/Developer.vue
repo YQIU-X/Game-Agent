@@ -283,8 +283,8 @@
                 <div v-if="trainingLogs.length === 0" class="empty-logs">
                   暂无日志信息
                 </div>
-              </div>
-            </el-card>
+                </div>
+              </el-card>
           </div>
           
           <!-- 参数配置 -->
@@ -415,7 +415,7 @@
           </div>
           
           <!-- 训练可视化 -->
-          <div v-if="activeMenu === 'visualization'" class="visualization-section">
+          <div v-if="activeMenu === 'visualization'" class="visualization-section visualization-scrollable">
             <div class="section-header">
               <h3>训练可视化</h3>
               <div class="section-actions">
@@ -427,20 +427,19 @@
                     :value="file.name">
                   </el-option>
                 </el-select>
-                <el-button @click="refreshCharts" :disabled="!hasTrainingData">刷新图表</el-button>
                 <el-button @click="exportData" :disabled="!hasTrainingData">导出数据</el-button>
               </div>
             </div>
             
             <!-- 实时图表控制面板 -->
-            <div v-if="hasTrainingData" class="realtime-controls">
+            <div class="realtime-controls">
               <div class="metrics-selector">
                 <h4>选择要显示的指标：</h4>
                 <div class="metrics-checkboxes">
                   <el-checkbox-group v-model="selectedMetrics" @change="updateRealtimeChart">
                     <el-checkbox label="total_reward">总奖励</el-checkbox>
                     <el-checkbox label="best_reward">最佳奖励</el-checkbox>
-                    <el-checkbox label="best_average">最佳平均奖励</el-checkbox>
+                    <el-checkbox label="average_reward">平均奖励</el-checkbox>
                     <el-checkbox label="epsilon">Epsilon值</el-checkbox>
                     <el-checkbox label="average_loss">平均损失</el-checkbox>
                   </el-checkbox-group>
@@ -454,9 +453,8 @@
                   <el-button :type="chartType === 'scatter' ? 'primary' : ''" @click="chartType = 'scatter'; updateRealtimeChart()">散点图</el-button>
                 </el-button-group>
                 
-                <el-switch v-model="autoRefresh" active-text="自动刷新" inactive-text="手动刷新" style="margin-left: 20px;" />
-                <span v-if="autoRefresh" class="refresh-interval">
-                  刷新间隔: 
+                <span class="refresh-interval">
+                  自动刷新间隔: 
                   <el-select v-model="refreshInterval" style="width: 80px;">
                     <el-option label="1秒" :value="1000"></el-option>
                     <el-option label="2秒" :value="2000"></el-option>
@@ -468,7 +466,7 @@
             </div>
             
             <!-- 实时图表显示区域 -->
-            <div v-if="hasTrainingData" class="realtime-chart-container">
+            <div class="realtime-chart-container">
               <el-card class="main-chart-card">
                 <template #header>
                   <div class="chart-header">
@@ -481,7 +479,7 @@
                     </div>
                   </div>
                 </template>
-                <div ref="realtimeChart" class="realtime-chart"></div>
+                <div ref="realtimeChartRef" class="realtime-chart"></div>
               </el-card>
               
               <!-- 训练统计 -->
@@ -513,7 +511,7 @@
             </div>
             
             <!-- 无数据提示 -->
-            <div v-else class="no-data-tip">
+            <div v-if="!hasTrainingData" class="no-data-tip">
               <el-empty description="暂无训练数据">
                 <template #image>
                   <el-icon size="100" color="#c0c4cc"><TrendCharts /></el-icon>
@@ -548,10 +546,17 @@
                 <p class="preview-note">启用渲染后可查看训练中的智能体行为</p>
               </div>
               <div v-else class="preview-video">
-                <div class="video-placeholder">
+                <div v-if="!currentRenderFrame" class="video-placeholder">
                   <el-icon class="video-icon"><VideoCamera /></el-icon>
                   <p>训练渲染视频</p>
-                  <p class="video-note">实时显示智能体在游戏中的表现</p>
+                  <p class="video-note">等待渲染帧...</p>
+                </div>
+                <div v-else class="render-frame-container">
+                  <img :src="currentRenderFrame" alt="训练渲染帧" class="render-frame" />
+                  <div class="frame-info">
+                    <p>Episode: {{ currentEpisode }}</p>
+                    <p>Step: {{ currentStep }}</p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -663,6 +668,8 @@ export default {
     const trainingMetrics = ref([])
     const currentProcessId = ref(null)
     const enableRender = ref(false)
+    const currentRenderFrame = ref(null)
+    const currentStep = ref(0)
     
     // 算法和游戏配置
     const algorithmConfigs = ref({})
@@ -734,8 +741,8 @@ export default {
     
     // 实时图表相关
     const realtimeChartInstance = ref(null)
+    const realtimeChartRef = ref(null)
     const chartType = ref('line')
-    const autoRefresh = ref(true)
     const refreshInterval = ref(2000)
     const refreshTimer = ref(null)
     
@@ -749,11 +756,11 @@ export default {
     const avgReward = computed(() => {
       if (trainingMetrics.value.length === 0) return 0
       const recentMetrics = trainingMetrics.value.slice(-100)
-      return recentMetrics.reduce((sum, m) => sum + m.reward, 0) / recentMetrics.length
+      return recentMetrics.reduce((sum, m) => sum + (m.total_reward || 0), 0) / recentMetrics.length
     })
     const bestReward = computed(() => {
       if (trainingMetrics.value.length === 0) return 0
-      return Math.max(...trainingMetrics.value.map(m => m.reward))
+      return Math.max(...trainingMetrics.value.map(m => m.total_reward || 0))
     })
     const totalSteps = computed(() => {
       const lastMetric = trainingMetrics.value[trainingMetrics.value.length - 1]
@@ -764,7 +771,7 @@ export default {
     const availableMetricsForChart = computed(() => [
       { value: 'total_reward', label: '总奖励' },
       { value: 'best_reward', label: '最佳奖励' },
-      { value: 'best_average', label: '最佳平均奖励' },
+      { value: 'average_reward', label: '平均奖励' },
       { value: 'epsilon', label: 'Epsilon值' },
       { value: 'average_loss', label: '平均损失' }
     ])
@@ -828,7 +835,7 @@ export default {
             algorithm: 'dqn',
             game: 'mario',
             fileType: 'constants',
-            category: 'algorithm'
+            category: 'game'
           })
         })
         
@@ -979,36 +986,94 @@ export default {
     }
     
     // 重置训练配置为默认值
-    const resetTrainingConfig = () => {
-      trainingForm.value = {
-        algorithm: selectedAlgorithm.value,
-        game: selectedGame.value,
-        environment: availableEnvironments.value[0] || 'SuperMarioBros-1-1-v0',
-        action_space: Object.keys(availableActionSpaces.value)[0] || 'complex',
-        episodes: 50000,
-        max_steps_per_episode: 10000,
-        save_frequency: 100,
-        log_frequency: 10,
-        render: false,
-        save_model: true,
-        use_gpu: true,
-        verbose: true,
-        // DQN特定参数 - 使用super-mario-bros-dqn的默认值
-        learning_rate: 1e-4,
-        gamma: 0.99,
-        epsilon_start: 1.0,
-        epsilon_final: 0.01,
-        epsilon_decay: 100000,
-        batch_size: 32,
-        memory_capacity: 20000,
-        target_update_frequency: 1000,
-        initial_learning: 10000,
-        beta_start: 0.4,
-        beta_frames: 10000
+    const resetTrainingConfig = async () => {
+      try {
+        ElMessageBox.confirm(
+          '确定要重置所有配置文件为原始备份状态吗？这将覆盖当前的所有配置。',
+          '重置确认',
+          {
+            confirmButtonText: '确定',
+            cancelButtonText: '取消',
+            type: 'warning'
+          }
+        ).then(async () => {
+          console.log('开始重置配置文件...')
+          
+          // 需要重置的文件列表
+          const filesToReset = [
+            { fileType: 'constants', category: 'algorithm' },
+            { fileType: 'constants', category: 'game' },
+            { fileType: 'model', category: 'algorithm' },
+            { fileType: 'replay_buffer', category: 'algorithm' },
+            { fileType: 'trainer', category: 'algorithm' },
+            { fileType: 'wrappers', category: 'game' }
+          ]
+          
+          let successCount = 0
+          let failCount = 0
+          const failedFiles = []
+          
+          // 逐个重置文件
+          for (const file of filesToReset) {
+            try {
+              const res = await fetch('/api/config-manager/reset-to-original', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                  algorithm: 'dqn',
+                  game: 'mario',
+                  fileType: file.fileType,
+                  category: file.category
+                })
+              })
+              
+              const result = await res.json()
+              if (result.success) {
+                successCount++
+                console.log(`成功重置 ${file.category}/${file.fileType}.py`)
+        } else {
+                failCount++
+                failedFiles.push(`${file.category}/${file.fileType}.py: ${result.message}`)
+                console.error(`重置失败 ${file.category}/${file.fileType}.py:`, result.message)
+              }
+            } catch (error) {
+              failCount++
+              failedFiles.push(`${file.category}/${file.fileType}.py: ${error.message}`)
+              console.error(`重置失败 ${file.category}/${file.fileType}.py:`, error)
+            }
+          }
+          
+          // 显示结果
+          if (successCount > 0) {
+            let message = `成功重置 ${successCount} 个配置文件`
+            if (failCount > 0) {
+              message += `，${failCount} 个文件重置失败`
+            }
+            ElMessage.success(message)
+            
+            if (failedFiles.length > 0) {
+              console.warn('重置失败的文件:', failedFiles)
+            }
+          } else {
+            ElMessage.error('所有文件重置失败')
+          }
+          
+          // 重新加载配置
+          await loadConfigs()
+          
+          // 从备份文件初始化训练控制表单
+          await initializeTrainingFormFromBackup()
+          
+          console.log('配置文件重置完成')
+        }).catch(() => {
+          // 用户取消
+        })
+      } catch (error) {
+        console.error('重置配置失败:', error)
+        ElMessage.error('重置配置失败')
       }
-      
-      // 重置算法特定参数
-      updateAlgorithmConfig()
     }
     
     // 统一配置管理方法
@@ -1574,6 +1639,7 @@ export default {
             'BETA_START': 'beta_start',
             'BETA_FRAMES': 'beta_frames',
             'ENVIRONMENT': 'environment',
+            'DEFAULT_ACTION_SPACE': 'action_space',
             'ACTION_SPACE': 'action_space'
           }
           
@@ -1984,45 +2050,110 @@ export default {
     
     // 加载指标数据
     const loadMetricsData = async () => {
-      if (!selectedEnvironment.value) return
+      if (!selectedEnvironment.value) {
+        console.log('loadMetricsData: 没有选择环境')
+        return
+      }
+      
+      console.log('loadMetricsData: 开始加载数据，环境:', selectedEnvironment.value)
       
       try {
         const res = await fetch(`/api/training-metrics/${selectedEnvironment.value}`)
         const result = await res.json()
+        console.log('loadMetricsData: API响应:', result)
+        
         if (result.success) {
           trainingMetrics.value = result.metrics
-          updateRealtimeChart()
-          // 如果自动刷新开启，启动定时器
-          if (autoRefresh.value) {
-            startAutoRefresh()
+          console.log('loadMetricsData: 数据加载成功，指标数量:', result.metrics.length)
+          console.log('loadMetricsData: 前3个指标:', result.metrics.slice(0, 3))
+          
+          // 确保图表实例存在后再更新
+          if (!realtimeChartInstance.value) {
+            console.log('loadMetricsData: 图表实例不存在，尝试初始化')
+            initRealtimeChart()
+          } else {
+            updateRealtimeChart()
           }
+          
+          // 始终启动自动刷新
+          startAutoRefresh()
+        } else {
+          console.error('loadMetricsData: API返回失败:', result.message)
         }
       } catch (error) {
         console.error('加载指标数据失败:', error)
       }
     }
+
+    // 获取渲染帧
+    const loadRenderFrame = async () => {
+      try {
+        const response = await fetch('/api/render-frame')
+        if (!response.ok) {
+          return
+        }
+        
+        const data = await response.json()
+        if (data.success && data.frame) {
+          currentRenderFrame.value = data.frame
+          // 从文件名解析step信息
+          const filename = data.filename
+          const stepMatch = filename.match(/step_(\d+)/)
+          if (stepMatch) {
+            currentStep.value = parseInt(stepMatch[1])
+          }
+        }
+      } catch (error) {
+        console.error('获取渲染帧失败:', error)
+      }
+    }
     
     // 实时图表相关方法
     const initRealtimeChart = () => {
-      nextTick(() => {
-        const chartEl = document.querySelector('[ref="realtimeChart"]')
-        if (chartEl && !realtimeChartInstance.value) {
-          realtimeChartInstance.value = echarts.init(chartEl)
+      console.log('initRealtimeChart 被调用')
+      console.log('realtimeChartRef.value:', !!realtimeChartRef.value)
+      console.log('realtimeChartInstance.value:', !!realtimeChartInstance.value)
+      
+      if (realtimeChartRef.value && !realtimeChartInstance.value) {
+        try {
+          realtimeChartInstance.value = echarts.init(realtimeChartRef.value)
+          console.log('图表初始化成功')
+          
+          // 立即更新图表
           updateRealtimeChart()
+        } catch (error) {
+          console.error('图表初始化失败:', error)
         }
-      })
+      } else if (realtimeChartInstance.value) {
+        console.log('图表实例已存在，直接更新')
+        updateRealtimeChart()
+      } else {
+        console.log('图表容器或实例不存在')
+      }
     }
     
     const updateRealtimeChart = () => {
-      if (!realtimeChartInstance.value || trainingMetrics.value.length === 0) return
+      console.log('updateRealtimeChart 被调用')
+      console.log('realtimeChartInstance.value:', !!realtimeChartInstance.value)
+      console.log('trainingMetrics.value.length:', trainingMetrics.value.length)
       
-      const episodes = trainingMetrics.value.map((_, index) => index)
+      if (!realtimeChartInstance.value || trainingMetrics.value.length === 0) {
+        console.log('图表更新被跳过 - 缺少实例或数据')
+        return
+      }
+      
+      // 按episode排序数据
+      const sortedMetrics = [...trainingMetrics.value].sort((a, b) => a.episode - b.episode)
+      const episodes = sortedMetrics.map(m => m.episode)
       const series = []
+      console.log('episodes:', episodes.length)
+      console.log('episode range:', Math.min(...episodes), 'to', Math.max(...episodes))
       
       // 为每个选中的指标创建系列
       selectedMetrics.value.forEach(metricKey => {
-        const data = trainingMetrics.value.map(m => m[metricKey] || 0)
+        const data = sortedMetrics.map(m => m[metricKey] || 0)
         const metricLabel = getMetricLabel(metricKey)
+        console.log(`指标 ${metricKey} (${metricLabel}):`, data.slice(0, 5), '...')
         
         series.push({
           name: metricLabel,
@@ -2039,6 +2170,9 @@ export default {
           }
         })
       })
+      
+      console.log('创建的系列数量:', series.length)
+      console.log('系列数据:', series.map(s => ({ name: s.name, dataLength: s.data.length })))
       
       const option = {
         title: {
@@ -2092,14 +2226,16 @@ export default {
         animationDuration: 300
       }
       
+      console.log('设置图表选项:', option)
       realtimeChartInstance.value.setOption(option, true)
+      console.log('图表选项设置完成')
     }
     
     const getMetricLabel = (metricKey) => {
       const labels = {
         'total_reward': '总奖励',
         'best_reward': '最佳奖励',
-        'best_average': '最佳平均奖励',
+        'average_reward': '平均奖励',
         'epsilon': 'Epsilon值',
         'average_loss': '平均损失'
       }
@@ -2111,7 +2247,7 @@ export default {
         clearInterval(refreshTimer.value)
       }
       
-      if (autoRefresh.value && selectedEnvironment.value) {
+      if (selectedEnvironment.value) {
         refreshTimer.value = setInterval(async () => {
           try {
             const res = await fetch(`/api/training-metrics/${selectedEnvironment.value}`)
@@ -2134,28 +2270,49 @@ export default {
       }
     }
     
-    // 监听自动刷新开关
-    watch(autoRefresh, (newVal) => {
-      if (newVal) {
-        startAutoRefresh()
-      } else {
-        stopAutoRefresh()
+    // 渲染帧自动刷新
+    let renderRefreshTimer = null
+    
+    const startRenderRefresh = () => {
+      if (renderRefreshTimer) {
+        clearInterval(renderRefreshTimer)
       }
-    })
+      
+      renderRefreshTimer = setInterval(() => {
+        if (enableRender.value && isTraining.value) {
+          loadRenderFrame()
+        }
+      }, 1000) // 每秒刷新一次渲染帧
+    }
+    
+    const stopRenderRefresh = () => {
+      if (renderRefreshTimer) {
+        clearInterval(renderRefreshTimer)
+        renderRefreshTimer = null
+      }
+    }
     
     // 监听刷新间隔变化
     watch(refreshInterval, () => {
-      if (autoRefresh.value) {
-        startAutoRefresh()
-      }
+      startAutoRefresh()
     })
     
     // 监听训练状态变化
     watch(isTraining, (newVal) => {
-      if (newVal && autoRefresh.value) {
+      if (newVal) {
         startAutoRefresh()
-      } else if (!newVal) {
+      } else {
         stopAutoRefresh()
+        stopRenderRefresh()
+      }
+    })
+    
+    // 监听渲染开关变化
+    watch(enableRender, (newVal) => {
+      if (newVal && isTraining.value) {
+        startRenderRefresh()
+      } else {
+        stopRenderRefresh()
       }
     })
     
@@ -2167,6 +2324,35 @@ export default {
     // 监听图表类型变化
     watch(chartType, () => {
       updateRealtimeChart()
+    })
+    
+    // 监听页面切换，强制重新初始化图表
+    watch(activeMenu, (newMenu) => {
+      if (newMenu === 'visualization') {
+        console.log('切换到可视化页面，强制重新初始化图表')
+        // 清理现有实例
+        if (realtimeChartInstance.value) {
+          try {
+            realtimeChartInstance.value.dispose()
+            realtimeChartInstance.value = null
+            console.log('已清理现有图表实例')
+          } catch (error) {
+            console.error('清理图表实例失败:', error)
+          }
+        }
+        
+        // 延迟重新初始化，确保DOM完全渲染
+        setTimeout(() => {
+          console.log('开始强制初始化图表')
+          initRealtimeChart()
+          
+          // 如果有数据，立即更新图表
+          if (trainingMetrics.value.length > 0) {
+            console.log('有数据，立即更新图表')
+            updateRealtimeChart()
+          }
+        }, 300)
+      }
     })
     const addChart = () => {
       if (!newChart.value.title || newChart.value.metrics.length === 0) return
@@ -2196,10 +2382,24 @@ export default {
     // 旧的图表方法已移除，现在使用实时图表系统
     
     // 图表相关
-    const initCharts = () => {
-      loadAvailableMetricsFiles()
-      // 初始化实时图表
-      initRealtimeChart()
+    const initCharts = async () => {
+      console.log('initCharts 开始执行')
+      await loadAvailableMetricsFiles()
+      console.log('loadAvailableMetricsFiles 完成')
+      
+      // 使用更长的延迟确保DOM完全渲染
+      setTimeout(() => {
+        console.log('开始初始化图表和数据加载')
+        initRealtimeChart()
+        
+        // 如果有可用的指标文件，自动加载数据
+        if (availableMetricsFiles.value.length > 0) {
+          console.log('有可用文件，开始加载数据')
+          loadMetricsData()
+        } else {
+          console.log('没有可用文件')
+        }
+      }, 800)
     }
     
     const updateCharts = () => {
@@ -2252,19 +2452,35 @@ export default {
       await loadConfigs()
       // 在加载配置后，从备份文件初始化训练控制表单
       await initializeTrainingFormFromBackup()
-      initCharts()
+      await initCharts()
     })
     
     onBeforeUnmount(() => {
+      // 清理日志轮询
       if (logPollingInterval) {
         clearInterval(logPollingInterval)
+        logPollingInterval = null
       }
+      
       // 清理实时图表
       if (realtimeChartInstance.value) {
-        realtimeChartInstance.value.dispose()
+        try {
+          realtimeChartInstance.value.dispose()
+          realtimeChartInstance.value = null
+        } catch (error) {
+          console.warn('清理图表实例时出错:', error)
+        }
       }
+      
       // 清理自动刷新定时器
       stopAutoRefresh()
+      stopRenderRefresh()
+      
+      // 清理所有可能的定时器
+      if (refreshTimer.value) {
+        clearInterval(refreshTimer.value)
+        refreshTimer.value = null
+      }
     })
 
     return {
@@ -2272,8 +2488,11 @@ export default {
       username,
       isTraining,
       trainingLogs,
+      trainingMetrics,
       trainingForm,
       enableRender,
+      currentRenderFrame,
+      currentStep,
       hasTrainingData,
       currentEpisode,
       avgReward,
@@ -2348,14 +2567,17 @@ export default {
       addChart,
       // 旧的图表方法已移除
       // 实时图表相关
+      realtimeChartRef,
       chartType,
-      autoRefresh,
       refreshInterval,
       updateRealtimeChart,
       initRealtimeChart,
       startAutoRefresh,
       stopAutoRefresh,
-      getMetricLabel
+      getMetricLabel,
+      loadRenderFrame,
+      startRenderRefresh,
+      stopRenderRefresh
     }
   }
 }
@@ -2560,6 +2782,36 @@ export default {
   font-size: 14px;
   color: #909399;
   margin-top: 10px;
+}
+
+.render-frame-container {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.render-frame {
+  max-width: 100%;
+  max-height: 80%;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.frame-info {
+  margin-top: 16px;
+  text-align: center;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 8px 16px;
+  border-radius: 4px;
+  color: white;
+}
+
+.frame-info p {
+  margin: 4px 0;
+  font-size: 14px;
 }
 
 .config-section {
@@ -2864,6 +3116,11 @@ export default {
   min-height: 500px;
 }
 
+.realtime-chart {
+  height: 400px;
+  width: 100%;
+}
+
 .chart-header {
   display: flex;
   justify-content: space-between;
@@ -2912,5 +3169,34 @@ export default {
 .no-data-tip {
   text-align: center;
   padding: 60px 20px;
+}
+
+/* 训练可视化滚动条样式 */
+.visualization-scrollable {
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 10px;
+  /* 避免ResizeObserver问题 */
+  contain: layout style;
+  will-change: scroll-position;
+}
+
+.visualization-scrollable::-webkit-scrollbar {
+  width: 8px;
+}
+
+.visualization-scrollable::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 4px;
+}
+
+.visualization-scrollable::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 4px;
+}
+
+.visualization-scrollable::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
 }
 </style>

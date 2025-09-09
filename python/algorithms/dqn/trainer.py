@@ -18,19 +18,25 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+# 添加utils路径
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'utils'))
+try:
+    from render_service import get_render_service
+    RENDER_SERVICE_AVAILABLE = True
+except ImportError:
+    RENDER_SERVICE_AVAILABLE = False
+
 import numpy as np
 import torch
 import torch.optim as optim
 from torch.optim import Adam
 
 # 导入DQN相关模块
-from python.algorithms.dqn.core.model import CNNDQN, DQN
-from python.algorithms.dqn.core.replay_buffer import PrioritizedBuffer, ReplayBuffer
-from python.algorithms.dqn.core.helpers import (
+from python.algorithms.dqn.core import (
+    CNNDQN, DQN, PrioritizedBuffer, ReplayBuffer,
     compute_td_loss, update_epsilon, update_beta,
     set_device, initialize_models, save_model
 )
-from python.algorithms.dqn.core.constants import *
 
 # 导入Mario相关模块
 from python.games.mario.core import wrap_mario_environment, ACTION_SPACES
@@ -66,15 +72,12 @@ class DQNTrainer:
         self.episode = 0
         self.total_steps = 0
         self.best_reward = -float('inf')
-        self.best_average = -float('inf')
         self.episode_rewards = []
         
-        # 训练指标收集
+        # CSV记录相关
         self.training_metrics = []
         self.episode_losses = []
-        
-        # 当前epsilon值
-        self.epsilon = self.epsilon_start
+        self.csv_filename = None
         
         # 模型和优化器
         self.model = None
@@ -89,6 +92,55 @@ class DQNTrainer:
         self.log_frequency = config.get('log_frequency', 10)
         self.save_frequency = config.get('save_frequency', 100)
         
+    def setup_csv_logging(self, environment):
+        """设置CSV日志记录"""
+        # 创建training_metrics目录
+        os.makedirs('training_metrics', exist_ok=True)
+        
+        # 设置CSV文件名 - 使用简单的环境名称
+        self.csv_filename = f'training_metrics/{environment}.csv'
+        
+        # 写入CSV头部
+        with open(self.csv_filename, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(['episode', 'total_reward', 'best_reward', 'average_reward', 
+                           'episode_length', 'total_steps', 'epsilon', 'average_loss', 
+                           'learning_rate', 'gamma', 'timestamp'])
+        
+        print(f"[DQN Training] CSV log file created: {self.csv_filename}", flush=True)
+    
+    def save_metrics_to_csv(self, episode, episode_reward, episode_length, epsilon, avg_loss):
+        """保存训练指标到CSV文件"""
+        if self.csv_filename:
+            # 计算平均奖励
+            avg_reward = np.mean(self.episode_rewards[-100:]) if len(self.episode_rewards) >= 100 else np.mean(self.episode_rewards)
+            
+            # 准备数据
+            metrics_data = [
+                episode,
+                round(episode_reward, 3),
+                round(self.best_reward, 3),
+                round(avg_reward, 3),
+                episode_length,
+                self.total_steps,
+                round(epsilon, 4),
+                round(avg_loss, 4) if not np.isnan(avg_loss) else 0.0,
+                self.learning_rate,
+                self.gamma,
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            ]
+            
+            # 写入CSV
+            with open(self.csv_filename, 'a', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(metrics_data)
+    
+    def shape_reward(self, reward):
+        """
+        奖励塑形函数，用于提升训练稳定性
+        """
+        return np.sign(reward) * (np.sqrt(abs(reward) + 1) - 1) + 0.001 * reward
+        
     def setup_environment(self, environment, action_space):
         """
         设置环境
@@ -97,12 +149,8 @@ class DQNTrainer:
             action_space: 动作空间
         """
         # 获取动作空间
-        if action_space == 'simple':
-            action_space_obj = SIMPLE_MOVEMENT
-        elif action_space == 'complex':
-            action_space_obj = COMPLEX_MOVEMENT
-        elif action_space == 'right_only':
-            action_space_obj = RIGHT_ONLY
+        if action_space in ACTION_SPACES:
+            action_space_obj = globals()[ACTION_SPACES[action_space]]
         else:
             action_space_obj = COMPLEX_MOVEMENT
             
@@ -139,7 +187,7 @@ class DQNTrainer:
             loss.backward()
             self.optimizer.step()
             
-            # 收集损失值
+            # 记录损失
             self.episode_losses.append(loss.item())
     
     def run_episode(self, render=False):
@@ -173,17 +221,44 @@ class DQNTrainer:
             
             # 渲染
             if render:
-                self.env.render()
+                try:
+                    # 使用渲染服务进行headless渲染
+                    if RENDER_SERVICE_AVAILABLE:
+                        render_service = get_render_service()
+                        # 获取当前episode和step信息
+                        current_episode = len(self.episode_rewards) + 1
+                        frame_data = render_service.render_frame(
+                            self.env.unwrapped,  # 使用未包装的环境
+                            current_episode,
+                            episode_length,
+                            save_image=True
+                        )
+                        if frame_data:
+                            # 可以在这里将frame_data发送到前端
+                            pass
+                    else:
+                        # 回退到原始渲染
+                        self.env.render()
+                except Exception as e:
+                    # 如果渲染失败，记录错误但不中断训练
+                    if not hasattr(self, '_render_error_logged'):
+                        print(f"[警告] 渲染失败: {e}", flush=True)
+                        print(f"[警告] 继续训练但不显示画面", flush=True)
+                        print(f"[提示] 在Windows服务器环境中，渲染功能需要图形界面支持", flush=True)
+                        self._render_error_logged = True
             
             # 执行动作
             next_state, reward, done, info = self.env.step(action)
             
-            # 存储经验
-            self.replay_buffer.push(state, action, reward, next_state, done)
+            # 使用原始奖励记录episode总分
+            episode_reward += reward
+            
+            # 使用塑形后的奖励进行训练
+            shaped_reward = self.shape_reward(reward)
+            self.replay_buffer.push(state, action, shaped_reward, next_state, done)
             
             # 更新状态
             state = next_state
-            episode_reward += reward
             episode_length += 1
             self.total_steps += 1
             
@@ -195,28 +270,6 @@ class DQNTrainer:
         
         return episode_reward, episode_length
     
-        # 创建保存目录
-        os.makedirs('models', exist_ok=True)
-        os.makedirs('training_metrics', exist_ok=True)
-        
-    def save_metrics_to_csv(self):
-        """将收集的回合指标保存到 CSV 文件中"""
-        filename = f'training_metrics/{self.config.get("environment", "unknown")}.csv'
-        directory = os.path.dirname(filename)
-        
-        os.makedirs(directory, exist_ok=True)
-        
-        file_exists = os.path.isfile(filename)
-        with open(filename, 'a', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=['episode', 'total_reward', 'best_average', 'best_reward', 'epsilon', 'average_loss'])
-            if not file_exists:
-                writer.writeheader()
-            
-            for metric in self.training_metrics:
-                writer.writerow(metric)
-        
-        self.training_metrics.clear()
-    
     def train(self, num_episodes, render=False, save_path=None):
         """
         开始训练
@@ -225,18 +278,22 @@ class DQNTrainer:
             render: 是否渲染
             save_path: 模型保存路径
         """
-        print(f"Starting DQN training for {num_episodes} episodes", flush=True)
-        print(f"Device: {self.device}", flush=True)
-        print(f"Environment: {self.config.get('environment', 'Unknown')}", flush=True)
-        print(f"Action Space: {self.config.get('action_space', 'Unknown')}", flush=True)
+        print(f"[DQN Training] Starting training with {num_episodes} episodes", flush=True)
+        print(f"[DQN Training] Device: {self.device}", flush=True)
+        print(f"[DQN Training] Environment: {self.config.get('environment', 'Unknown')}", flush=True)
+        print(f"[DQN Training] Action Space: {self.config.get('action_space', 'Unknown')}", flush=True)
+        
+        # 设置CSV日志记录
+        environment = self.config.get('environment', 'Unknown')
+        self.setup_csv_logging(environment)
         
         start_time = time.time()
         
         for episode in range(num_episodes):
             self.episode = episode
             
-            # 更新epsilon值
-            self.epsilon = update_epsilon(self.total_steps, self.epsilon_start, self.epsilon_final, self.epsilon_decay)
+            # 清空episode损失记录
+            self.episode_losses.clear()
             
             # 运行episode
             episode_reward, episode_length = self.run_episode(render)
@@ -251,62 +308,41 @@ class DQNTrainer:
             # 计算平均奖励
             avg_reward = np.mean(self.episode_rewards[-100:]) if len(self.episode_rewards) >= 100 else np.mean(self.episode_rewards)
             
-            # 更新最佳平均奖励
-            if avg_reward > self.best_average:
-                self.best_average = avg_reward
+            # 计算平均损失
+            avg_loss = np.mean(self.episode_losses) if self.episode_losses else 0.0
             
-            # 计算回合平均损失
-            average_loss = np.mean(self.episode_losses) if self.episode_losses else np.nan
-            
-            # 收集训练指标
-            metrics_dict = {
-                'episode': episode,
-                'total_reward': round(episode_reward, 3),
-                'best_average': round(self.best_average, 3),
-                'best_reward': round(self.best_reward, 3),
-                'epsilon': round(self.epsilon, 4),
-                'average_loss': round(average_loss, 4) if not np.isnan(average_loss) else np.nan
-            }
-            self.training_metrics.append(metrics_dict)
+            # 计算当前epsilon
+            current_epsilon = update_epsilon(
+                self.total_steps, self.epsilon_start, 
+                self.epsilon_final, self.epsilon_decay
+            )
             
             # 保存指标到CSV
-            self.save_metrics_to_csv()
+            self.save_metrics_to_csv(episode, episode_reward, episode_length, current_epsilon, avg_loss)
             
-            # 清空回合损失列表
-            self.episode_losses.clear()
-            
-            # 日志输出 - 参考示例代码的格式
+            # 日志输出 - 确保每次都输出到终端
             if episode % self.log_frequency == 0:
                 elapsed_time = time.time() - start_time
-                log_message = f'Episode {episode} - Reward: {round(episode_reward, 3)}, ' \
-                             f'Best: {round(self.best_reward, 3)}, Average: {round(avg_reward, 3)}, ' \
-                             f'Epsilon: {round(self.epsilon, 4)}'
-                print(log_message, flush=True)
-                
-                # 如果达到新的最佳平均奖励，保存模型
-                if avg_reward == self.best_average and episode > 0:
-                    best_message = f'New best average reward of {round(self.best_average, 3)}! Saving model'
-                    print(best_message, flush=True)
-                    if save_path:
-                        model_path = os.path.join(save_path, f"dqn_model_best_avg.pth")
-                        save_model(self.model, model_path)
-                        save_message = f"Best average model saved to: {model_path}"
-                        print(save_message, flush=True)
+                print(f"[DQN Training] Episode {episode} - Reward: {episode_reward:.2f}, "
+                      f"Best: {self.best_reward:.2f}, Average: {avg_reward:.2f}, "
+                      f"Length: {episode_length}, Steps: {self.total_steps}, "
+                      f"Loss: {avg_loss:.4f}, Epsilon: {current_epsilon:.4f}, "
+                      f"Time: {elapsed_time:.1f}s", flush=True)
             
             # 保存模型
             if save_path and episode % self.save_frequency == 0:
                 model_path = os.path.join(save_path, f"dqn_model_episode_{episode}.pth")
                 save_model(self.model, model_path)
-                save_message = f"Model saved to: {model_path}"
-                print(save_message, flush=True)
+                print(f"[DQN Training] Model saved to: {model_path}", flush=True)
         
-        print("Training completed!", flush=True)
+        print("[DQN Training] Training completed!", flush=True)
+        print(f"[DQN Training] Training metrics saved to: {self.csv_filename}", flush=True)
         
         # 保存最终模型
         if save_path:
             final_model_path = os.path.join(save_path, "dqn_model_final.pth")
             save_model(self.model, final_model_path)
-            print(f"Final model saved to: {final_model_path}", flush=True)
+            print(f"[DQN Training] Final model saved to: {final_model_path}", flush=True)
 
 
 def parse_args():
@@ -355,7 +391,7 @@ def parse_args():
                        help='强制使用CPU')
     parser.add_argument('--save-path', type=str, default='models',
                        help='模型保存路径')
-    parser.add_argument('--log-frequency', type=int, default=1,
+    parser.add_argument('--log-frequency', type=int, default=10,
                        help='日志输出频率')
     parser.add_argument('--save-frequency', type=int, default=100,
                        help='模型保存频率')

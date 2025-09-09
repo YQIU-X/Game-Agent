@@ -45,6 +45,5 @@ class CNNDQN(nn.Module):
             action = randrange(self._num_actions)
         return action
 
-
-# DQN类作为CNNDQN的别名，保持向后兼容
+# 为了向后兼容，添加DQN别名
 DQN = CNNDQN

@@ -105,7 +105,6 @@ def main():
     # 创建训练器
     trainer = DQNTrainer(config)
     
-    print("开始训练")
     # 设置环境
     trainer.setup_environment(args.environment, args.action_space)
     
