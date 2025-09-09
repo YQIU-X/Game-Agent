@@ -283,8 +283,8 @@
                 <div v-if="trainingLogs.length === 0" class="empty-logs">
                   暂无日志信息
                 </div>
-              </div>
-            </el-card>
+                </div>
+              </el-card>
           </div>
           
           <!-- 参数配置 -->
