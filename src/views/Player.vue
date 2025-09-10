@@ -64,10 +64,15 @@
               >
                 <el-option 
                   v-for="m in availableModels" 
-                  :key="m" 
+                  :key="typeof m === 'string' ? m : m.path" 
                   :label="getModelLabel(m)" 
-                  :value="m"
-                />
+                  :value="typeof m === 'string' ? m : m.path"
+                >
+                  <span style="float: left">{{ getModelLabel(m) }}</span>
+                  <span style="float: right; color: #8492a6; font-size: 13px">
+                    {{ typeof m === 'string' ? 'legacy' : (m.type || 'unknown') }}
+                  </span>
+                </el-option>
               </el-select>
             </div>
             
@@ -401,7 +406,10 @@ export default {
           // 启动智能体
           const { startStreamApi } = await import('../api')
           const agentPayload = { level: selectedLevel.value, fps: 8 }
-          if (selectedWeights.value) agentPayload.weights = selectedWeights.value
+          if (selectedWeights.value) {
+            // 支持新的文件路径格式
+            agentPayload.weights = selectedWeights.value
+          }
           const agentResponse = await startStreamApi(agentPayload)
           
           if (agentResponse.data && agentResponse.data.success) {
@@ -554,9 +562,23 @@ export default {
     }
 
     // 获取模型标签
-    const getModelLabel = (modelPath) => {
-      const filename = modelPath.split('/').pop()
-      return filename.replace('.dat', '').replace('.pth', '')
+    const getModelLabel = (model) => {
+      if (typeof model === 'string') {
+        // 兼容旧格式
+        const filename = model.split('/').pop()
+        return filename.replace('.dat', '').replace('.pth', '')
+      } else if (model && model.name) {
+        // 新格式：显示实验路径和文件名
+        const parts = model.name.split('/')
+        if (parts.length > 1) {
+          const experiment = parts.slice(0, -1).join('/')
+          const filename = parts[parts.length - 1].replace('.dat', '').replace('.pth', '')
+          return `${experiment}/${filename}`
+        } else {
+          return model.name.replace('.dat', '').replace('.pth', '')
+        }
+      }
+      return 'Unknown Model'
     }
 
     // 页面加载时自动列举可用模型

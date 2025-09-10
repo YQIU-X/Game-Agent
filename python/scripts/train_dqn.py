@@ -12,11 +12,17 @@ import time
 import argparse
 from datetime import datetime
 
+# 修复pyglet兼容性问题并设置无头模式
+import os
+os.environ['PYGLET_HEADLESS'] = '1'  # 设置无头模式
+os.environ['SDL_VIDEODRIVER'] = 'dummy'  # 禁用SDL视频驱动
+os.environ['DISPLAY'] = ''  # 清空显示环境变量
+
 # 添加项目根目录到Python路径
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, project_root)
 
-from python.algorithms.dqn import DQNTrainer
+from python.algorithms.dqn.trainer import DQNTrainer
 from python.algorithms.dqn.core.constants import *
 from python.games.mario.core.constants import DEFAULT_ENVIRONMENT, DEFAULT_ACTION_SPACE
 
@@ -87,6 +93,7 @@ def main():
     config = {
         'environment': args.environment,
         'action_space': args.action_space,
+        'algorithm': 'DQN',
         'learning_rate': args.learning_rate,
         'gamma': args.gamma,
         'epsilon_start': args.epsilon_start,

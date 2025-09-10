@@ -18,6 +18,16 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+# 应用pyglet兼容性补丁
+try:
+    from python.utils.pyglet_patch import patch_pyglet
+    patch_pyglet()
+except ImportError:
+    # 如果补丁文件不存在，设置环境变量
+    os.environ['PYGLET_HEADLESS'] = '1'
+    os.environ['SDL_VIDEODRIVER'] = 'dummy'  # 禁用SDL视频驱动
+    os.environ['DISPLAY'] = ''  # 清空显示环境变量
+
 import numpy as np
 import torch
 import torch.optim as optim
@@ -33,6 +43,9 @@ from python.algorithms.dqn.core import (
 # 导入Mario相关模块
 from python.games.mario.core import wrap_mario_environment, ACTION_SPACES
 from gym_super_mario_bros.actions import SIMPLE_MOVEMENT, COMPLEX_MOVEMENT, RIGHT_ONLY
+
+# 导入实验管理器
+from python.utils.experiment_manager import experiment_manager
 
 
 class DQNTrainer:
@@ -84,13 +97,35 @@ class DQNTrainer:
         self.log_frequency = config.get('log_frequency', 10)
         self.save_frequency = config.get('save_frequency', 100)
         
+        # 实验管理
+        self.experiment_dir = None
+        self.metrics_path = None
+        self.logs_path = None
+        self.weights_dir = None
+        
+    def setup_experiment(self, environment, algorithm='DQN'):
+        """设置实验目录和文件路径"""
+        # 创建实验目录
+        self.experiment_dir = experiment_manager.create_experiment_dir(
+            environment, algorithm, self.config
+        )
+        
+        # 设置文件路径
+        self.metrics_path = experiment_manager.get_metrics_path(self.experiment_dir)
+        self.logs_path = experiment_manager.get_logs_path(self.experiment_dir)
+        self.weights_dir = experiment_manager.get_weights_dir(self.experiment_dir)
+        
+        print(f"[DQN Training] 实验目录: {self.experiment_dir}", flush=True)
+        
     def setup_csv_logging(self, environment):
         """设置CSV日志记录"""
-        # 创建training_metrics目录
-        os.makedirs('training_metrics', exist_ok=True)
-        
-        # 设置CSV文件名 - 使用简单的环境名称
-        self.csv_filename = f'training_metrics/{environment}.csv'
+        if not self.metrics_path:
+            # 如果没有设置实验目录，使用旧的方式
+            os.makedirs('training_metrics', exist_ok=True)
+            self.csv_filename = f'training_metrics/{environment}.csv'
+        else:
+            # 使用新的实验目录
+            self.csv_filename = self.metrics_path
         
         # 写入CSV头部
         with open(self.csv_filename, 'w', newline='', encoding='utf-8') as f:
@@ -211,9 +246,15 @@ class DQNTrainer:
             # 选择动作
             action = self.model.act(state, epsilon, self.device)
             
-            # 渲染
+            # 渲染 - 恢复原来的渲染方式
             if render:
-                self.env.render()
+                try:
+                    self.env.render()
+                except Exception as e:
+                    # 如果渲染失败，记录错误但不中断训练
+                    if not hasattr(self, '_render_error_logged'):
+                        print(f"[DQN训练] 渲染失败，继续无头模式训练: {e}", flush=True)
+                        self._render_error_logged = True
             
             # 执行动作
             next_state, reward, done, info = self.env.step(action)
@@ -244,15 +285,19 @@ class DQNTrainer:
         Args:
             num_episodes: 训练episode数
             render: 是否渲染
-            save_path: 模型保存路径
+            save_path: 模型保存路径（兼容旧接口）
         """
         print(f"[DQN Training] Starting training with {num_episodes} episodes", flush=True)
         print(f"[DQN Training] Device: {self.device}", flush=True)
         print(f"[DQN Training] Environment: {self.config.get('environment', 'Unknown')}", flush=True)
         print(f"[DQN Training] Action Space: {self.config.get('action_space', 'Unknown')}", flush=True)
         
-        # 设置CSV日志记录
+        # 设置实验目录
         environment = self.config.get('environment', 'Unknown')
+        algorithm = self.config.get('algorithm', 'DQN')
+        self.setup_experiment(environment, algorithm)
+        
+        # 设置CSV日志记录
         self.setup_csv_logging(environment)
         
         start_time = time.time()
@@ -298,16 +343,48 @@ class DQNTrainer:
                       f"Time: {elapsed_time:.1f}s", flush=True)
             
             # 保存模型
-            if save_path and episode % self.save_frequency == 0:
-                model_path = os.path.join(save_path, f"dqn_model_episode_{episode}.pth")
-                save_model(self.model, model_path)
-                print(f"[DQN Training] Model saved to: {model_path}", flush=True)
+            if episode % self.save_frequency == 0:
+                if self.weights_dir:
+                    # 使用新的实验目录
+                    model_path = experiment_manager.save_model(
+                        self.experiment_dir, f"checkpoint_episode_{episode}", 
+                        self.model.state_dict()
+                    )
+                    print(f"[DQN Training] Model saved to: {model_path}", flush=True)
+                elif save_path:
+                    # 兼容旧的方式
+                    model_path = os.path.join(save_path, f"dqn_model_episode_{episode}.pth")
+                    save_model(self.model, model_path)
+                    print(f"[DQN Training] Model saved to: {model_path}", flush=True)
+            
+            # 保存最佳模型
+            if episode_reward > self.best_reward and self.weights_dir:
+                best_model_path = experiment_manager.save_model(
+                    self.experiment_dir, "best_model", 
+                    self.model.state_dict()
+                )
+                print(f"[DQN Training] Best model saved to: {best_model_path}", flush=True)
         
         print("[DQN Training] Training completed!", flush=True)
         print(f"[DQN Training] Training metrics saved to: {self.csv_filename}", flush=True)
         
         # 保存最终模型
-        if save_path:
+        if self.weights_dir:
+            final_model_path = experiment_manager.save_model(
+                self.experiment_dir, "final_model", 
+                self.model.state_dict()
+            )
+            print(f"[DQN Training] Final model saved to: {final_model_path}", flush=True)
+            
+            # 更新实验状态
+            experiment_manager.update_metadata(self.experiment_dir, {
+                "status": "completed",
+                "final_episode": episode,
+                "best_reward": self.best_reward,
+                "total_steps": self.total_steps
+            })
+        elif save_path:
+            # 兼容旧的方式
             final_model_path = os.path.join(save_path, "dqn_model_final.pth")
             save_model(self.model, final_model_path)
             print(f"[DQN Training] Final model saved to: {final_model_path}", flush=True)
@@ -379,6 +456,7 @@ def main():
     config = {
         'environment': args.environment,
         'action_space': args.action_space,
+        'algorithm': 'DQN',
         'learning_rate': args.learning_rate,
         'gamma': args.gamma,
         'epsilon_start': args.epsilon_start,

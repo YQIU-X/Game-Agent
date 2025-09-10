@@ -431,12 +431,14 @@
             <div class="section-header">
               <h3>训练可视化</h3>
               <div class="section-actions">
-                <el-select v-model="selectedEnvironment" placeholder="选择环境" @change="loadMetricsData" style="width: 200px; margin-right: 10px;">
+                <el-select v-model="selectedEnvironment" placeholder="选择训练记录" @change="loadMetricsData" style="width: 300px; margin-right: 10px;">
                   <el-option
                     v-for="file in availableMetricsFiles"
                     :key="file.name"
-                    :label="file.name"
+                    :label="file.displayName"
                     :value="file.name">
+                    <span style="float: left">{{ file.displayName }}</span>
+                    <span style="float: right; color: #8492a6; font-size: 13px">{{ file.type }}</span>
                   </el-option>
                 </el-select>
                 <el-button @click="exportData" :disabled="!hasTrainingData">导出数据</el-button>
@@ -2131,10 +2133,41 @@ export default {
         const res = await fetch('/api/training-metrics-files')
         const result = await res.json()
         if (result.success) {
-          availableMetricsFiles.value = result.files
-          if (result.files.length > 0 && !selectedEnvironment.value) {
-            selectedEnvironment.value = result.files[0].name
+          // 处理新的文件结构
+          const processedFiles = result.files.map(file => {
+            if (file.type === 'experiment') {
+              // 新格式：显示实验路径
+              return {
+                name: file.name,
+                path: file.path,
+                size: file.size,
+                modified: file.modified,
+                type: file.type,
+                displayName: file.name // 使用实验路径作为显示名称
+              }
+            } else {
+              // 旧格式：保持兼容
+              return {
+                name: file.name,
+                path: file.path,
+                size: file.size,
+                modified: file.modified,
+                type: file.type || 'legacy',
+                displayName: file.name
+              }
+            }
+          })
+          
+          availableMetricsFiles.value = processedFiles
+          
+          // 自动选择最新的文件
+          if (processedFiles.length > 0 && !selectedEnvironment.value) {
+            const latestFile = processedFiles[0] // 已经按修改时间排序
+            selectedEnvironment.value = latestFile.name
             await loadMetricsData()
+            
+            // 显示成功消息
+            ElMessage.success(`已自动加载最新的训练记录: ${latestFile.displayName}`)
           }
         }
       } catch (error) {

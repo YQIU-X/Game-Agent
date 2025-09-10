@@ -174,6 +174,10 @@ def wrap_mario_environment(environment, action_space, monitor=False, iteration=0
     Returns:
         env: 包装后的环境
     """
+    # 设置环境变量（保留基本设置）
+    import os
+    os.environ['PYGLET_HEADLESS'] = '1'  # 保留pyglet无头模式
+    
     env = make(environment)
     
     if monitor:

@@ -344,27 +344,137 @@ app.get('/api/models', (req, res) => {
   try {
     const models = [];
     
-    // 扫描新的目录结构
+    // 扫描新的实验目录结构
+    const experimentsDir = path.join(__dirname, 'experiments');
+    if (fs.existsSync(experimentsDir)) {
+      const scanExperiments = (dir, prefix = '') => {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        
+        for (const entry of entries) {
+          if (entry.isDirectory()) {
+            const subDir = path.join(dir, entry.name);
+            const newPrefix = prefix ? `${prefix}/${entry.name}` : entry.name;
+            
+            // 检查是否有weights目录
+            const weightsDir = path.join(subDir, 'weights');
+            if (fs.existsSync(weightsDir)) {
+              const weightFiles = fs.readdirSync(weightsDir)
+                .filter(f => f.endsWith('.pth') || f.endsWith('.dat'));
+              
+              weightFiles.forEach(file => {
+                models.push({
+                  path: `experiments/${newPrefix}/weights/${file}`,
+                  name: `${newPrefix}/${file}`,
+                  type: 'experiment',
+                  experiment_path: `experiments/${newPrefix}`
+                });
+              });
+            }
+            
+            // 递归扫描子目录
+            scanExperiments(subDir, newPrefix);
+          }
+        }
+      };
+      
+      scanExperiments(experimentsDir);
+    }
+    
+    // 扫描旧的目录结构（兼容性）
     const marioDqnDir = path.join(__dirname, 'pretrained_models', 'mario', 'dqn');
     if (fs.existsSync(marioDqnDir)) {
       const files = fs.readdirSync(marioDqnDir).filter(f => f.endsWith('.dat') || f.endsWith('.pth'));
       files.forEach(file => {
-        models.push(`pretrained_models/mario/dqn/${file}`);
+        models.push({
+          path: `pretrained_models/mario/dqn/${file}`,
+          name: file,
+          type: 'pretrained'
+        });
       });
     }
     
-    // 扫描其他可能的目录
     const oldDir = path.join(__dirname, 'pretrained_models');
     if (fs.existsSync(oldDir)) {
       const files = fs.readdirSync(oldDir).filter(f => f.endsWith('.dat') || f.endsWith('.pth'));
       files.forEach(file => {
-        models.push(file);
+        models.push({
+          path: file,
+          name: file,
+          type: 'legacy'
+        });
       });
     }
+    
+    // 按类型和名称排序
+    models.sort((a, b) => {
+      if (a.type !== b.type) {
+        const typeOrder = { 'experiment': 0, 'pretrained': 1, 'legacy': 2 };
+        return typeOrder[a.type] - typeOrder[b.type];
+      }
+      return a.name.localeCompare(b.name);
+    });
     
     res.json({ success: true, models });
   } catch (error) {
     res.status(500).json({ success: false, message: '读取失败: ' + error.message });
+  }
+});
+
+// 获取实验列表
+app.get('/api/experiments', (req, res) => {
+  try {
+    const experimentsDir = path.join(__dirname, 'experiments');
+    const experiments = [];
+    
+    if (!fs.existsSync(experimentsDir)) {
+      return res.json({ success: true, experiments: [] });
+    }
+    
+    const scanExperiments = (dir, prefix = '') => {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const subDir = path.join(dir, entry.name);
+          const newPrefix = prefix ? `${prefix}/${entry.name}` : entry.name;
+          
+          // 检查是否有metadata.json文件
+          const metadataFile = path.join(subDir, 'metadata.json');
+          if (fs.existsSync(metadataFile)) {
+            try {
+              const metadata = JSON.parse(fs.readFileSync(metadataFile, 'utf8'));
+              const stats = fs.statSync(subDir);
+              
+              experiments.push({
+                path: `experiments/${newPrefix}`,
+                name: newPrefix,
+                metadata: metadata,
+                created_at: stats.birthtime,
+                modified_at: stats.mtime,
+                has_metrics: fs.existsSync(path.join(subDir, 'metrics.csv')),
+                has_weights: fs.existsSync(path.join(subDir, 'weights')) && 
+                           fs.readdirSync(path.join(subDir, 'weights')).length > 0
+              });
+            } catch (e) {
+              console.warn(`无法读取元数据文件: ${metadataFile}`, e);
+            }
+          }
+          
+          // 递归扫描子目录
+          scanExperiments(subDir, newPrefix);
+        }
+      }
+    };
+    
+    scanExperiments(experimentsDir);
+    
+    // 按创建时间排序
+    experiments.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    
+    res.json({ success: true, experiments });
+  } catch (error) {
+    console.error('获取实验列表失败:', error);
+    res.status(500).json({ success: false, message: '获取实验列表失败' });
   }
 });
 
@@ -1505,10 +1615,49 @@ function broadcastTrainingComplete(processId, exitCode) {
 // 获取训练指标数据 - 从CSV文件读取
 app.get('/api/training-metrics/:environment', (req, res) => {
   const { environment } = req.params
-  const csvPath = path.join(__dirname, 'training_metrics', `${environment}.csv`)
   
   try {
-    if (!fs.existsSync(csvPath)) {
+    let csvPath = null
+    
+    // 首先尝试新的实验目录结构
+    const experimentsDir = path.join(__dirname, 'experiments')
+    if (fs.existsSync(experimentsDir)) {
+      const envDir = path.join(experimentsDir, environment)
+      if (fs.existsSync(envDir)) {
+        // 查找所有算法目录
+        const algorithmDirs = fs.readdirSync(envDir, { withFileTypes: true })
+          .filter(e => e.isDirectory())
+          .map(e => e.name)
+        
+        for (const algorithmDir of algorithmDirs) {
+          const algorithmPath = path.join(envDir, algorithmDir)
+          const sessionDirs = fs.readdirSync(algorithmPath, { withFileTypes: true })
+            .filter(e => e.isDirectory())
+            .map(e => e.name)
+            .sort()
+            .reverse() // 最新的在前面
+          
+          if (sessionDirs.length > 0) {
+            const latestSession = sessionDirs[0]
+            const metricsFile = path.join(algorithmPath, latestSession, 'metrics.csv')
+            if (fs.existsSync(metricsFile)) {
+              csvPath = metricsFile
+              break // 找到第一个就退出
+            }
+          }
+        }
+      }
+    }
+    
+    // 如果没找到，尝试旧的目录结构
+    if (!csvPath) {
+      const oldPath = path.join(__dirname, 'training_metrics', `${environment}.csv`)
+      if (fs.existsSync(oldPath)) {
+        csvPath = oldPath
+      }
+    }
+    
+    if (!csvPath || !fs.existsSync(csvPath)) {
       return res.json({ success: true, metrics: [] })
     }
     
@@ -1550,21 +1699,61 @@ app.get('/api/training-metrics/:environment', (req, res) => {
 
 // 获取可用的训练指标文件列表
 app.get('/api/training-metrics-files', (req, res) => {
-  const metricsDir = path.join(__dirname, 'training_metrics')
+  const experimentsDir = path.join(__dirname, 'experiments')
+  const oldMetricsDir = path.join(__dirname, 'training_metrics')
   
   try {
-    if (!fs.existsSync(metricsDir)) {
-      return res.json({ success: true, files: [] })
+    const files = []
+    
+    // 扫描新的实验目录结构
+    if (fs.existsSync(experimentsDir)) {
+      const scanExperiments = (dir, prefix = '') => {
+        const entries = fs.readdirSync(dir, { withFileTypes: true })
+        
+        for (const entry of entries) {
+          if (entry.isDirectory()) {
+            const subDir = path.join(dir, entry.name)
+            const newPrefix = prefix ? `${prefix}/${entry.name}` : entry.name
+            
+            // 检查是否有metrics.csv文件
+            const metricsFile = path.join(subDir, 'metrics.csv')
+            if (fs.existsSync(metricsFile)) {
+              const stats = fs.statSync(metricsFile)
+              files.push({
+                name: newPrefix,
+                path: `experiments/${newPrefix}/metrics.csv`,
+                size: stats.size,
+                modified: stats.mtime,
+                type: 'experiment'
+              })
+            }
+            
+            // 递归扫描子目录
+            scanExperiments(subDir, newPrefix)
+          }
+        }
+      }
+      
+      scanExperiments(experimentsDir)
     }
     
-    const files = fs.readdirSync(metricsDir)
-      .filter(file => file.endsWith('.csv'))
-      .map(file => ({
-        name: file.replace('.csv', ''),
-        path: file,
-        size: fs.statSync(path.join(metricsDir, file)).size,
-        modified: fs.statSync(path.join(metricsDir, file)).mtime
-      }))
+    // 扫描旧的training_metrics目录（兼容性）
+    if (fs.existsSync(oldMetricsDir)) {
+      const oldFiles = fs.readdirSync(oldMetricsDir)
+        .filter(file => file.endsWith('.csv'))
+        .map(file => ({
+          name: file.replace('.csv', ''),
+          path: file,
+          size: fs.statSync(path.join(oldMetricsDir, file)).size,
+          modified: fs.statSync(path.join(oldMetricsDir, file)).mtime,
+          type: 'legacy'
+        }))
+      
+      files.push(...oldFiles)
+    }
+    
+    // 按修改时间排序
+    files.sort((a, b) => new Date(b.modified) - new Date(a.modified))
     
     res.json({ success: true, files })
   } catch (error) {

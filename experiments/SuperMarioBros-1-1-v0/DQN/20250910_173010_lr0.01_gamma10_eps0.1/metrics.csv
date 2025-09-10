@@ -1,0 +1,4 @@
+episode,total_reward,best_reward,average_reward,episode_length,total_steps,epsilon,average_loss,learning_rate,gamma,timestamp
+0,6.3,6.3,6.3,146,146,0.0986,0.0,0.01,0.1,2025-09-10 17:30:11
+1,-1.5,6.3,2.4,423,569,0.0945,0.0,0.01,0.1,2025-09-10 17:30:16
+2,9.725,9.725,4.842,2020,2589,0.0774,0.0,0.01,0.1,2025-09-10 17:30:34
