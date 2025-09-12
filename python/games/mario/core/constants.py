@@ -21,7 +21,7 @@ MARIO_ENVIRONMENTS = [
 ]
 
 # 默认环境
-DEFAULT_ENVIRONMENT = "SuperMarioBros-1-1-v0"
+DEFAULT_ENVIRONMENT = 'SuperMarioBros-1-1-v0'
 
 # 动作空间定义
 ACTION_SPACES = {
@@ -31,7 +31,7 @@ ACTION_SPACES = {
 }
 
 # 默认动作空间
-DEFAULT_ACTION_SPACE = "complex"
+DEFAULT_ACTION_SPACE = 'complex'
 
 # 图像处理参数
 FRAME_WIDTH = 84
