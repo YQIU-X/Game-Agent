@@ -9,6 +9,23 @@
 
 感谢这些项目的开源贡献，为我们的游戏代理平台提供了重要的技术基础。
 
+## 登录
+```javascript
+// 模拟用户数据
+const users = [
+  { username: 'developer', password: 'dev123', role: 'developer' },
+  { username: 'player', password: 'play123', role: 'player' }
+];
+```
+
+## 环境
+```bash
+conda create -n [env name] python=3.8
+conda activate [env name]
+pip install -r requirement.txt
+```
+
+
 ## ✨ 核心特性
 
 ### 🎯 **智能实验管理**
