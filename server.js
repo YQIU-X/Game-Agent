@@ -359,14 +359,41 @@ app.get('/api/models', (req, res) => {
             const weightsDir = path.join(subDir, 'weights');
             if (fs.existsSync(weightsDir)) {
               const weightFiles = fs.readdirSync(weightsDir)
-                .filter(f => f.endsWith('.pth') || f.endsWith('.dat'));
+                .filter(f => f.endsWith('.pth') || f.endsWith('.pt') || f.endsWith('.dat'));
+              
+              // 尝试读取metadata.json和config.json
+              let metadata = null;
+              let config = null;
+              const metadataFile = path.join(subDir, 'metadata.json');
+              const configFile = path.join(subDir, 'config.json');
+              
+              if (fs.existsSync(metadataFile)) {
+                try {
+                  metadata = JSON.parse(fs.readFileSync(metadataFile, 'utf8'));
+                } catch (e) {
+                  console.warn(`无法读取metadata文件: ${metadataFile}`, e);
+                }
+              }
+              
+              if (fs.existsSync(configFile)) {
+                try {
+                  config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+                } catch (e) {
+                  console.warn(`无法读取config文件: ${configFile}`, e);
+                }
+              }
               
               weightFiles.forEach(file => {
                 models.push({
                   path: `experiments/${newPrefix}/weights/${file}`,
                   name: `${newPrefix}/${file}`,
                   type: 'experiment',
-                  experiment_path: `experiments/${newPrefix}`
+                  experiment_path: `experiments/${newPrefix}`,
+                  metadata: metadata,
+                  config: config,
+                  // 从路径推断环境信息（用于pretrained模型）
+                  environment: metadata ? metadata.environment : (newPrefix.split('/')[0] || ''),
+                  algorithm: metadata ? metadata.algorithm : (newPrefix.split('/')[1] || 'DQN')
                 });
               });
             }
@@ -388,7 +415,9 @@ app.get('/api/models', (req, res) => {
         models.push({
           path: `pretrained_models/mario/dqn/${file}`,
           name: file,
-          type: 'pretrained'
+          type: 'pretrained',
+          environment: file.replace('.dat', '').replace('.pth', ''),
+          algorithm: 'DQN'
         });
       });
     }
@@ -400,7 +429,9 @@ app.get('/api/models', (req, res) => {
         models.push({
           path: file,
           name: file,
-          type: 'legacy'
+          type: 'legacy',
+          environment: file.replace('.dat', '').replace('.pth', ''),
+          algorithm: 'DQN'
         });
       });
     }
@@ -523,14 +554,33 @@ app.post('/api/start-dqn', (req, res) => {
 
 // 启动帧流：调用 render_stream.py，输出包含 base64 JPEG 的 JSON 行
 app.post('/api/start-stream', (req, res) => {
-  const { level, weights, fps } = req.body;
+  const { level, weights, fps, algorithm } = req.body;
   if (!level) {
     return res.status(400).json({ success: false, message: '缺少必要参数 level' });
   }
-  // 根据是否提供权重，选择纯渲染或推理渲染
-  const scriptPath = weights ? path.join(__dirname, 'python/scripts/agent_inference.py') : path.join(__dirname, 'render_stream.py');
+  
+  // 根据算法类型选择对应的推理脚本
+  let scriptPath;
+  if (weights) {
+    // 根据算法类型选择推理脚本
+    switch (algorithm?.toLowerCase()) {
+      case 'ppo':
+        scriptPath = path.join(__dirname, 'python/scripts/ppo_inference.py');
+        break;
+      case 'dqn':
+      default:
+        scriptPath = path.join(__dirname, 'python/scripts/agent_inference.py');
+        break;
+    }
+  } else {
+    scriptPath = path.join(__dirname, 'render_stream.py');
+  }
+  
   const args = [scriptPath, '--env', level];
-  if (weights) args.push('--weights', weights);
+  if (weights) {
+    args.push('--weights', weights);
+    if (algorithm) args.push('--algorithm', algorithm);
+  }
   if (fps) args.push('--fps', String(fps));
 
   const streamProc = spawn(PYTHON_BIN, args, {
@@ -601,11 +651,17 @@ app.post('/api/start-training', (req, res) => {
   const processId = Date.now().toString();
   
   // 根据算法选择对应的训练脚本
-  const algorithmScripts = {
-    'DQN': 'python/scripts/train_dqn.py',
-    'PPO': 'python/scripts/train_ppo.py',
-    'A2C': 'python/scripts/train_a2c.py'
-  };
+    const algorithmScripts = {
+      'DQN': 'python/scripts/train_dqn.py',
+      'PPO': 'python/scripts/train_ppo.py',
+      'A2C': 'python/scripts/train_a2c.py'
+    };
+    
+    const inferenceScripts = {
+      'DQN': 'python/scripts/agent_inference.py',
+      'PPO': 'python/scripts/ppo_inference.py',
+      'A2C': 'python/scripts/agent_inference.py'
+    };
   
   const scriptPath = algorithmScripts[algorithm];
   if (!scriptPath) {
@@ -1612,48 +1668,60 @@ function broadcastTrainingComplete(processId, exitCode) {
   });
 }
 
-// 获取训练指标数据 - 从CSV文件读取
+// 获取训练指标数据 - 支持指定文件路径
 app.get('/api/training-metrics/:environment', (req, res) => {
   const { environment } = req.params
+  const { filePath } = req.query // 新增：支持指定文件路径
   
   try {
     let csvPath = null
     
-    // 首先尝试新的实验目录结构
-    const experimentsDir = path.join(__dirname, 'experiments')
-    if (fs.existsSync(experimentsDir)) {
-      const envDir = path.join(experimentsDir, environment)
-      if (fs.existsSync(envDir)) {
-        // 查找所有算法目录
-        const algorithmDirs = fs.readdirSync(envDir, { withFileTypes: true })
-          .filter(e => e.isDirectory())
-          .map(e => e.name)
-        
-        for (const algorithmDir of algorithmDirs) {
-          const algorithmPath = path.join(envDir, algorithmDir)
-          const sessionDirs = fs.readdirSync(algorithmPath, { withFileTypes: true })
+    // 如果指定了文件路径，直接使用
+    if (filePath) {
+      const fullPath = path.join(__dirname, filePath)
+      if (fs.existsSync(fullPath)) {
+        csvPath = fullPath
+      }
+    } else {
+      // 否则使用原来的逻辑：自动选择最新的
+      const experimentsDir = path.join(__dirname, 'experiments')
+      if (fs.existsSync(experimentsDir)) {
+        const envDir = path.join(experimentsDir, environment)
+        if (fs.existsSync(envDir)) {
+          // 查找所有算法目录
+          const algorithmDirs = fs.readdirSync(envDir, { withFileTypes: true })
             .filter(e => e.isDirectory())
             .map(e => e.name)
-            .sort()
-            .reverse() // 最新的在前面
           
-          if (sessionDirs.length > 0) {
-            const latestSession = sessionDirs[0]
-            const metricsFile = path.join(algorithmPath, latestSession, 'metrics.csv')
-            if (fs.existsSync(metricsFile)) {
-              csvPath = metricsFile
-              break // 找到第一个就退出
+          for (const algorithmDir of algorithmDirs) {
+            const algorithmPath = path.join(envDir, algorithmDir)
+            const sessionDirs = fs.readdirSync(algorithmPath, { withFileTypes: true })
+              .filter(e => e.isDirectory() && !e.name.startsWith('pretrained')) // 排除pretrained目录
+              .map(e => ({
+                name: e.name,
+                path: path.join(algorithmPath, e.name),
+                mtime: fs.statSync(path.join(algorithmPath, e.name)).mtime
+              }))
+              .sort((a, b) => b.mtime - a.mtime) // 按修改时间排序，最新的在前面
+            
+            if (sessionDirs.length > 0) {
+              const latestSession = sessionDirs[0]
+              const metricsFile = path.join(latestSession.path, 'metrics.csv')
+              if (fs.existsSync(metricsFile)) {
+                csvPath = metricsFile
+                break // 找到第一个就退出
+              }
             }
           }
         }
       }
-    }
-    
-    // 如果没找到，尝试旧的目录结构
-    if (!csvPath) {
-      const oldPath = path.join(__dirname, 'training_metrics', `${environment}.csv`)
-      if (fs.existsSync(oldPath)) {
-        csvPath = oldPath
+      
+      // 如果没找到，尝试旧的目录结构
+      if (!csvPath) {
+        const oldPath = path.join(__dirname, 'training_metrics', `${environment}.csv`)
+        if (fs.existsSync(oldPath)) {
+          csvPath = oldPath
+        }
       }
     }
     
@@ -1712,6 +1780,11 @@ app.get('/api/training-metrics-files', (req, res) => {
         
         for (const entry of entries) {
           if (entry.isDirectory()) {
+            // 跳过pretrained目录
+            if (entry.name.startsWith('pretrained')) {
+              continue
+            }
+            
             const subDir = path.join(dir, entry.name)
             const newPrefix = prefix ? `${prefix}/${entry.name}` : entry.name
             
@@ -1868,7 +1941,12 @@ app.post('/api/config-manager/save', (req, res) => {
     }
     
     // 先保存新内容到实际文件
-    fs.writeFileSync(filePath, content, 'utf8');
+    // 修复Python布尔值：将JavaScript的true/false转换为Python的True/False
+    let processedContent = content
+      .replace(/\btrue\b/g, 'True')
+      .replace(/\bfalse\b/g, 'False');
+    
+    fs.writeFileSync(filePath, processedContent, 'utf8');
     console.log('文件已保存到:', filePath);
     
     // 然后创建版本备份

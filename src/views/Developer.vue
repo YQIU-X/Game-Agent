@@ -30,10 +30,6 @@
               <el-icon><TrendCharts /></el-icon>
               <span>训练可视化</span>
             </el-menu-item>
-            <el-menu-item index="preview">
-              <el-icon><Monitor /></el-icon>
-              <span>训练预览</span>
-            </el-menu-item>
           </el-menu>
         </el-aside>
         
@@ -535,39 +531,6 @@
             </div>
           </div>
           
-          <!-- 训练预览 -->
-          <div v-if="activeMenu === 'preview'" class="preview-section">
-            <div class="section-header">
-              <h3>训练预览</h3>
-              <div class="section-actions">
-                <el-switch
-                  v-model="enableRender"
-                  active-text="启用渲染"
-                  inactive-text="禁用渲染"
-                  :disabled="!isTraining"
-                />
-              </div>
-            </div>
-            
-            <el-empty v-if="!isTraining" description="当前没有训练进行中，请先开始训练">
-              <el-button type="primary" @click="activeMenu = 'training'">去训练</el-button>
-            </el-empty>
-            
-            <div v-else class="preview-container">
-              <div v-if="!enableRender" class="preview-placeholder">
-                <el-icon class="preview-icon"><VideoPlay /></el-icon>
-                <p>训练预览区域</p>
-                <p class="preview-note">启用渲染后可查看训练中的智能体行为</p>
-              </div>
-              <div v-else class="preview-video">
-                <div class="video-placeholder">
-                  <el-icon class="video-icon"><VideoCamera /></el-icon>
-                  <p>训练渲染视频</p>
-                  <p class="video-note">实时显示智能体在游戏中的表现</p>
-                </div>
-              </div>
-            </div>
-          </div>
         </el-main>
       </el-container>
     </el-container>
@@ -857,14 +820,18 @@ export default {
           // 检查数据结构
           if (data.files && typeof data.files === 'object') {
             // files是一个对象，不是数组，需要找到constants文件
-            const constantsFile = Object.values(data.files).find(file => file.type === 'constants')
-            if (constantsFile) {
-              console.log('找到constants文件:', constantsFile)
-              await syncTrainingFormFromConstants(constantsFile.content)
+            const algorithmConstantsFile = Object.values(data.files).find(file => file.type === 'constants' && file.category === 'algorithm')
+            const gameConstantsFile = Object.values(data.files).find(file => file.type === 'constants' && file.category === 'game')
+            
+            if (algorithmConstantsFile && gameConstantsFile) {
+              console.log('找到constants文件:', { algorithmConstantsFile, gameConstantsFile })
+              // 合并两个文件的内容
+              const combinedContent = algorithmConstantsFile.content + '\n' + gameConstantsFile.content
+              await syncTrainingFormFromConstants(combinedContent)
               console.log('从最新备份文件初始化训练控制表单')
               return
             } else {
-              console.log('未找到constants文件')
+              console.log('未找到完整的constants文件:', { algorithmConstantsFile: !!algorithmConstantsFile, gameConstantsFile: !!gameConstantsFile })
             }
           } else {
             console.log('files不是对象:', typeof data.files)
@@ -875,26 +842,45 @@ export default {
         
         // 如果没有最新备份，从原始备份加载
         console.log('尝试从原始备份加载...')
-        const originalRes = await fetch('/api/config-manager/backup-original', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            algorithm: 'dqn',
-            game: 'mario',
-            fileType: 'constants',
-            category: 'game'
+        
+        // 同时加载algorithm和game constants
+        const [algorithmRes, gameRes] = await Promise.all([
+          fetch('/api/config-manager/backup-original', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              algorithm: 'dqn',
+              game: 'mario',
+              fileType: 'constants',
+              category: 'algorithm'
+            })
+          }),
+          fetch('/api/config-manager/backup-original', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              algorithm: 'dqn',
+              game: 'mario',
+              fileType: 'constants',
+              category: 'game'
+            })
           })
-        })
+        ])
         
-        console.log('原始备份API调用结果:', originalRes.status, originalRes.ok)
+        console.log('原始备份API调用结果:', { algorithm: algorithmRes.status, game: gameRes.status })
         
-        if (originalRes.ok) {
-          const originalData = await originalRes.json()
-          console.log('原始备份API返回数据:', originalData)
-          if (originalData.success && originalData.content) {
-            await syncTrainingFormFromConstants(originalData.content)
+        if (algorithmRes.ok && gameRes.ok) {
+          const [algorithmData, gameData] = await Promise.all([
+            algorithmRes.json(),
+            gameRes.json()
+          ])
+          
+          console.log('原始备份API返回数据:', { algorithmData, gameData })
+          
+          if (algorithmData.success && algorithmData.content && gameData.success && gameData.content) {
+            // 合并两个文件的内容
+            const combinedContent = algorithmData.content + '\n' + gameData.content
+            await syncTrainingFormFromConstants(combinedContent)
             console.log('从原始备份文件初始化训练控制表单')
             return
           }
@@ -1653,17 +1639,28 @@ export default {
           // 重新加载算法配置以获取最新的constants.py内容
           await loadConfigs()
           
-          // 解析constants.py文件内容，提取参数值
-          const constantsFile = configFiles.value.find(file => 
+          // 解析algorithm constants.py文件内容，提取参数值
+          const algorithmConstantsFile = configFiles.value.find(file => 
             file.type === 'constants' && file.category === 'algorithm'
           )
           
-          if (!constantsFile) {
-            ElMessage.warning('未找到constants配置文件')
+          // 解析game constants.py文件内容，提取动作空间和环境参数
+          const gameConstantsFile = configFiles.value.find(file => 
+            file.type === 'constants' && file.category === 'game'
+          )
+          
+          if (!algorithmConstantsFile) {
+            ElMessage.warning('未找到算法constants配置文件')
             return
           }
           
-          constantsContent = constantsFile.content
+          if (!gameConstantsFile) {
+            ElMessage.warning('未找到游戏constants配置文件')
+            return
+          }
+          
+          // 合并两个文件的内容
+          constantsContent = algorithmConstantsFile.content + '\n' + gameConstantsFile.content
         }
         
         // 解析Python常量文件，提取参数值
@@ -1727,9 +1724,14 @@ export default {
             'INITIAL_LEARNING': 'initial_learning',
             'BETA_START': 'beta_start',
             'BETA_FRAMES': 'beta_frames',
-            'ENVIRONMENT': 'environment',
+            'RENDER': 'render',
+            'SAVE_MODEL': 'save_model',
+            'USE_GPU': 'use_gpu',
+            'VERBOSE': 'verbose',
+            // 从game constants.py读取的参数
+            'DEFAULT_ENVIRONMENT': 'environment',
             'DEFAULT_ACTION_SPACE': 'action_space',
-            'ACTION_SPACE': 'action_space'
+            'MAX_STEPS_PER_EPISODE': 'max_steps_per_episode'
           }
           
           let updatedCount = 0
@@ -1739,6 +1741,25 @@ export default {
             if (parsedParams[constantsKey] !== undefined) {
               const oldValue = trainingForm.value[formKey]
               const newValue = parsedParams[constantsKey]
+              
+              // 特殊处理action_space：优先使用DEFAULT_ACTION_SPACE，如果不存在则使用ACTION_SPACE
+              if (formKey === 'action_space') {
+                const defaultActionSpace = parsedParams['DEFAULT_ACTION_SPACE']
+                const actionSpace = parsedParams['ACTION_SPACE']
+                const finalValue = defaultActionSpace !== undefined ? defaultActionSpace : actionSpace
+                
+                if (finalValue !== undefined) {
+                  console.log(`同步动作空间参数: ${formKey} ${oldValue} -> ${finalValue}`)
+                  console.log('动作空间同步详情:', { 
+                    DEFAULT_ACTION_SPACE: defaultActionSpace, 
+                    ACTION_SPACE: actionSpace, 
+                    finalValue 
+                  })
+                  trainingForm.value[formKey] = finalValue
+                  updatedCount++
+                }
+                return
+              }
               
               // 检查值是否在UI组件的有效范围内
               const paramConfig = algorithmParameters.value.find(p => p.name === formKey)
@@ -1752,12 +1773,9 @@ export default {
                 }
               }
               
-            console.log(`同步参数: ${formKey} ${oldValue} -> ${newValue}`)
-            if (formKey === 'action_space') {
-              console.log('特别关注action_space同步:', { oldValue, newValue, constantsKey })
-            }
-            trainingForm.value[formKey] = newValue
-            updatedCount++
+              console.log(`同步参数: ${formKey} ${oldValue} -> ${newValue}`)
+              trainingForm.value[formKey] = newValue
+              updatedCount++
             }
           })
           
@@ -1810,7 +1828,7 @@ export default {
         }
         
         // 参数映射：从训练表单字段到constants.py中的变量名
-        const paramMapping = {
+        const algorithmParamMapping = {
           'episodes': 'NUM_EPISODES',
           'learning_rate': 'LEARNING_RATE',
           'gamma': 'GAMMA',
@@ -1823,20 +1841,34 @@ export default {
           'initial_learning': 'INITIAL_LEARNING',
           'beta_start': 'BETA_START',
           'beta_frames': 'BETA_FRAMES',
-          'environment': 'ENVIRONMENT',
-          'action_space': 'ACTION_SPACE'
+          'render': 'RENDER',
+          'save_model': 'SAVE_MODEL',
+          'use_gpu': 'USE_GPU',
+          'verbose': 'VERBOSE'
+        }
+        
+        const gameParamMapping = {
+          'environment': 'DEFAULT_ENVIRONMENT',
+          'action_space': 'DEFAULT_ACTION_SPACE',
+          'max_steps_per_episode': 'MAX_STEPS_PER_EPISODE'
         }
         
         let updatedContent = content
         let updatedCount = 0
         
-        // 更新每个参数
-        Object.entries(paramMapping).forEach(([formKey, constantsKey]) => {
+        // 更新算法参数
+        Object.entries(algorithmParamMapping).forEach(([formKey, constantsKey]) => {
           const value = trainingForm.value[formKey]
           if (value !== undefined) {
-            // 使用正则表达式替换参数值
             const regex = new RegExp(`(${constantsKey}\\s*=\\s*)[^\\n]+`, 'g')
-            const newValue = typeof value === 'string' ? `"${value}"` : value
+            let newValue
+            if (typeof value === 'string') {
+              newValue = `"${value}"`
+            } else if (typeof value === 'boolean') {
+              newValue = value ? 'True' : 'False'
+            } else {
+              newValue = value
+            }
             const replacement = `$1${newValue}`
             
             if (regex.test(updatedContent)) {
@@ -1846,8 +1878,8 @@ export default {
           }
         })
         
+        // 保存算法参数到algorithm constants.py
         if (updatedCount > 0) {
-          // 直接保存到constants.py文件
           const res = await fetch('/api/config-manager/save', {
             method: 'POST',
             headers: {
@@ -1863,19 +1895,77 @@ export default {
           })
           
           const result = await res.json()
-          
-          if (result.success) {
-            ElMessage.success(`已保存 ${updatedCount} 个参数到constants.py文件`)
-            console.log(`已同步 ${updatedCount} 个参数到constants.py`)
-            
-            // 重新加载配置以更新UI
-            await loadAllConfigs()
-          } else {
-            ElMessage.error(result.message || '保存到constants.py失败')
+          if (!result.success) {
+            ElMessage.error('保存算法参数失败: ' + result.message)
+            return
           }
-        } else {
-          ElMessage.warning('没有参数需要同步')
         }
+        
+        // 更新游戏参数
+        const gameConstantsFile = configFiles.value.find(file => 
+          file.type === 'constants' && file.category === 'game'
+        )
+        
+        if (gameConstantsFile) {
+          let gameContent = gameConstantsFile.content
+          let gameUpdatedCount = 0
+          
+          Object.entries(gameParamMapping).forEach(([formKey, constantsKey]) => {
+            const value = trainingForm.value[formKey]
+            if (value !== undefined) {
+              // 特殊处理action_space，需要同时更新DEFAULT_ACTION_SPACE
+              if (formKey === 'action_space') {
+                const defaultActionSpaceRegex = new RegExp(`(DEFAULT_ACTION_SPACE\\s*=\\s*)[^\\n]+`, 'g')
+                const defaultActionSpaceReplacement = `$1"${value}"`
+                if (defaultActionSpaceRegex.test(gameContent)) {
+                  gameContent = gameContent.replace(defaultActionSpaceRegex, defaultActionSpaceReplacement)
+                  gameUpdatedCount++
+                }
+              } else {
+                const regex = new RegExp(`(${constantsKey}\\s*=\\s*)[^\\n]+`, 'g')
+                let newValue
+                if (typeof value === 'string') {
+                  newValue = `"${value}"`
+                } else if (typeof value === 'boolean') {
+                  newValue = value ? 'True' : 'False'
+                } else {
+                  newValue = value
+                }
+                const replacement = `$1${newValue}`
+                
+                if (regex.test(gameContent)) {
+                  gameContent = gameContent.replace(regex, replacement)
+                  gameUpdatedCount++
+                }
+              }
+            }
+          })
+          
+          // 保存游戏参数到game constants.py
+          if (gameUpdatedCount > 0) {
+            const gameRes = await fetch('/api/config-manager/save', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                algorithm: selectedAlgorithm.value.toLowerCase(),
+                game: selectedGame.value.toLowerCase(),
+                fileType: 'constants',
+                category: 'game',
+                content: gameContent
+              })
+            })
+            
+            const gameResult = await gameRes.json()
+            if (!gameResult.success) {
+              ElMessage.error('保存游戏参数失败: ' + gameResult.message)
+              return
+            }
+          }
+        }
+        
+        ElMessage.success('参数同步完成')
       } catch (error) {
         console.error('同步参数到constants.py失败:', error)
       }
@@ -2161,13 +2251,19 @@ export default {
           availableMetricsFiles.value = processedFiles
           
           // 自动选择最新的文件
-          if (processedFiles.length > 0 && !selectedEnvironment.value) {
+          if (processedFiles.length > 0) {
             const latestFile = processedFiles[0] // 已经按修改时间排序
-            selectedEnvironment.value = latestFile.name
-            await loadMetricsData()
             
-            // 显示成功消息
-            ElMessage.success(`已自动加载最新的训练记录: ${latestFile.displayName}`)
+            // 如果没有选择文件，或者正在训练且选择了旧文件，则自动切换到最新文件
+            if (!selectedEnvironment.value || (isTraining.value && selectedEnvironment.value !== latestFile.name)) {
+              selectedEnvironment.value = latestFile.name
+              await loadMetricsData()
+              
+              // 只在第一次选择时显示消息，避免训练期间频繁提示
+              if (!isTraining.value) {
+                ElMessage.success(`已自动加载最新的训练记录: ${latestFile.displayName}`)
+              }
+            }
           }
         }
       } catch (error) {
@@ -2182,10 +2278,19 @@ export default {
         return
       }
       
-      console.log('loadMetricsData: 开始加载数据，环境:', selectedEnvironment.value)
+      // 找到对应的文件信息
+      const selectedFile = availableMetricsFiles.value.find(file => file.name === selectedEnvironment.value)
+      if (!selectedFile) {
+        console.error('loadMetricsData: 找不到选择的文件')
+        return
+      }
+      
+      const environmentName = selectedEnvironment.value.split('/')[0]
+      const filePath = selectedFile.path
+      console.log('loadMetricsData: 开始加载数据，环境:', environmentName, '文件路径:', filePath)
       
       try {
-        const res = await fetch(`/api/training-metrics/${selectedEnvironment.value}`)
+        const res = await fetch(`/api/training-metrics/${environmentName}?filePath=${encodeURIComponent(filePath)}`)
         const result = await res.json()
         console.log('loadMetricsData: API响应:', result)
         
@@ -2234,8 +2339,8 @@ export default {
             realtimeChartInstance.value = echarts.init(container, null, {
               renderer: 'canvas',
               useDirtyRect: false,
-              width: 800,
-              height: 400
+              width: 600,
+              height: 300
             })
             
             // 禁用图表的自动 resize
@@ -2393,11 +2498,16 @@ export default {
             
             // 如果有选择的环境，加载数据
             if (selectedEnvironment.value) {
-              const res = await fetch(`/api/training-metrics/${selectedEnvironment.value}`)
-              const result = await res.json()
-              if (result.success) {
-                trainingMetrics.value = result.metrics
-                updateRealtimeChart()
+              const selectedFile = availableMetricsFiles.value.find(file => file.name === selectedEnvironment.value)
+              if (selectedFile) {
+                const environmentName = selectedEnvironment.value.split('/')[0]
+                const filePath = selectedFile.path
+                const res = await fetch(`/api/training-metrics/${environmentName}?filePath=${encodeURIComponent(filePath)}`)
+                const result = await res.json()
+                if (result.success) {
+                  trainingMetrics.value = result.metrics
+                  updateRealtimeChart()
+                }
               }
             }
           } catch (error) {
@@ -3246,12 +3356,13 @@ export default {
 }
 
 .chart-card {
-  min-height: 400px;
+  min-height: 350px;
 }
 
 .chart-container {
-  height: 350px;
+  height: 300px;
   width: 100%;
+  max-width: 500px;
 }
 
 /* 实时图表样式 */
@@ -3295,12 +3406,13 @@ export default {
 }
 
 .main-chart-card {
-  min-height: 500px;
+  min-height: 350px;
 }
 
 .realtime-chart {
-  height: 400px;
+  height: 300px;
   width: 100%;
+  max-width: 600px;
 }
 
 .chart-header {

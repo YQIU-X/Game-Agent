@@ -158,25 +158,34 @@ ALGORITHM_CONFIGS = {
                 'precision': 2,
                 'description': '折扣因子'
             },
-            'clip_ratio': {
+            'lambda_gae': {
+                'type': 'float',
+                'default': 0.95,
+                'min': 0.1,
+                'max': 1.0,
+                'step': 0.01,
+                'precision': 2,
+                'description': 'GAE lambda参数'
+            },
+            'clip_eps': {
                 'type': 'float',
                 'default': 0.2,
                 'min': 0.1,
                 'max': 0.5,
                 'step': 0.01,
                 'precision': 2,
-                'description': '裁剪比例'
+                'description': 'PPO裁剪参数'
             },
-            'value_loss_coef': {
+            'vf_coef': {
                 'type': 'float',
                 'default': 0.5,
                 'min': 0.1,
                 'max': 1.0,
                 'step': 0.1,
                 'precision': 1,
-                'description': '价值损失系数'
+                'description': '价值函数损失系数'
             },
-            'entropy_coef': {
+            'ent_coef': {
                 'type': 'float',
                 'default': 0.01,
                 'min': 0.001,
@@ -194,7 +203,7 @@ ALGORITHM_CONFIGS = {
                 'precision': 1,
                 'description': '最大梯度范数'
             },
-            'ppo_epochs': {
+            'epochs': {
                 'type': 'int',
                 'default': 4,
                 'min': 1,
@@ -202,13 +211,29 @@ ALGORITHM_CONFIGS = {
                 'step': 1,
                 'description': 'PPO更新轮数'
             },
-            'batch_size': {
+            'minibatch_size': {
                 'type': 'int',
                 'default': 64,
                 'min': 16,
                 'max': 256,
                 'step': 16,
-                'description': '批次大小'
+                'description': '小批次大小'
+            },
+            'num_env': {
+                'type': 'int',
+                'default': 8,
+                'min': 1,
+                'max': 32,
+                'step': 1,
+                'description': '并行环境数量'
+            },
+            'rollout_steps': {
+                'type': 'int',
+                'default': 128,
+                'min': 32,
+                'max': 512,
+                'step': 32,
+                'description': 'rollout步数'
             }
         },
         'flags': {

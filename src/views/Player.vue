@@ -45,6 +45,7 @@
               placeholder="选择智能体" 
               class="select-full-width"
               :disabled="!selectedGame"
+              @change="onAgentChange"
             >
               <el-option 
                 v-for="agent in availableAgents" 
@@ -58,9 +59,9 @@
             <div class="weights-row">
               <el-select 
                 v-model="selectedWeights"
-                placeholder="选择权重文件"
+                :placeholder="selectedAgent ? '选择权重文件' : '请先选择智能体'"
                 class="select-full-width"
-                :disabled="!selectedGame"
+                :disabled="!selectedGame || !selectedAgent"
               >
                 <el-option 
                   v-for="m in availableModels" 
@@ -70,10 +71,16 @@
                 >
                   <span style="float: left">{{ getModelLabel(m) }}</span>
                   <span style="float: right; color: #8492a6; font-size: 13px">
-                    {{ typeof m === 'string' ? 'legacy' : (m.type || 'unknown') }}
+                    {{ typeof m === 'string' ? 'legacy' : (m.type || m.algorithm || 'unknown') }}
                   </span>
                 </el-option>
               </el-select>
+              <div v-if="!selectedAgent" class="weight-hint">
+                <el-text type="info" size="small">请先选择智能体类型</el-text>
+              </div>
+              <div v-else-if="availableModels.length === 0" class="weight-hint">
+                <el-text type="warning" size="small">未找到{{ selectedAgent.toUpperCase() }}算法的权重文件</el-text>
+              </div>
             </div>
             
             <div class="game-controls">
@@ -405,7 +412,11 @@ export default {
           
           // 启动智能体
           const { startStreamApi } = await import('../api')
-          const agentPayload = { level: selectedLevel.value, fps: 8 }
+          const agentPayload = { 
+            level: selectedLevel.value, 
+            fps: 8,
+            algorithm: selectedAgent.value  // 添加算法类型
+          }
           if (selectedWeights.value) {
             // 支持新的文件路径格式
             agentPayload.weights = selectedWeights.value
@@ -549,16 +560,65 @@ export default {
       window.removeEventListener('keyup', handleKeyUp)
     })
     
-    // 初始化：仅一个游戏(super-mario-bros)，关卡1-1至3-3，智能体仅dqn
+    // 初始化：仅一个游戏(super-mario-bros)，关卡1-1至3-3，智能体支持dqn和ppo
     availableGames.value = [{ id: 'super-mario-bros', name: '超级马里奥' }]
     const levelIds = ['1-1','1-2','1-3','1-4','2-1','2-2','2-3','2-4','3-1','3-2','3-3']
     availableLevels.value = levelIds.map(v => ({ id: `SuperMarioBros-${v}-v0`, name: `关卡 ${v}` }))
-    availableAgents.value = [{ id: 'dqn', name: 'DQN 智能体' }]
+    availableAgents.value = [
+      { id: 'dqn', name: 'DQN 智能体' },
+      { id: 'ppo', name: 'PPO 智能体' }
+    ]
 
     const onGameChange = async () => {
       selectedLevel.value = ''
       selectedAgent.value = ''
       selectedWeights.value = ''
+      availableModels.value = []
+    }
+
+    // 根据算法类型加载对应的权重文件
+    const loadModelsByAlgorithm = async (algorithm) => {
+      try {
+        const { listModelsApi } = await import('../api')
+        const r = await listModelsApi()
+        if (r.data && r.data.success) {
+          const allModels = r.data.models || []
+          // 根据算法类型过滤模型
+          availableModels.value = allModels.filter(model => {
+            // 检查模型是否属于当前选择的算法
+            if (typeof model === 'string') {
+              // 旧格式：通过文件名判断
+              const filename = model.toLowerCase()
+              if (algorithm === 'dqn') {
+                return filename.includes('dqn') || filename.includes('q_network')
+              } else if (algorithm === 'ppo') {
+                return filename.includes('ppo') || filename.includes('actor_critic')
+              }
+              return false
+            } else if (model && model.algorithm) {
+              // 新格式：直接比较算法类型
+              return model.algorithm.toLowerCase() === algorithm.toLowerCase()
+            } else if (model && model.metadata && model.metadata.algorithm) {
+              // 从metadata中获取算法类型
+              return model.metadata.algorithm.toLowerCase() === algorithm.toLowerCase()
+            }
+            return false
+          })
+        }
+      } catch (error) {
+        console.error('加载模型失败:', error)
+        availableModels.value = []
+      }
+    }
+
+    // 智能体选择改变事件
+    const onAgentChange = async () => {
+      selectedWeights.value = ''
+      if (selectedAgent.value) {
+        await loadModelsByAlgorithm(selectedAgent.value)
+      } else {
+        availableModels.value = []
+      }
     }
 
     // 获取模型标签
@@ -573,6 +633,15 @@ export default {
         if (parts.length > 1) {
           const experiment = parts.slice(0, -1).join('/')
           const filename = parts[parts.length - 1].replace('.dat', '').replace('.pth', '')
+          
+          // 如果有metadata信息，显示更详细的信息
+          if (model.metadata) {
+            const env = model.metadata.environment || ''
+            const algo = model.metadata.algorithm || ''
+            const session = model.metadata.session_id || ''
+            return `${env} - ${algo} (${session})`
+          }
+          
           return `${experiment}/${filename}`
         } else {
           return model.name.replace('.dat', '').replace('.pth', '')
@@ -581,14 +650,8 @@ export default {
       return 'Unknown Model'
     }
 
-    // 页面加载时自动列举可用模型
-    ;(async () => {
-      try {
-        const { listModelsApi } = await import('../api')
-        const r = await listModelsApi()
-        if (r.data && r.data.success) availableModels.value = r.data.models || []
-      } catch (_) { /* ignore */ }
-    })()
+    // 页面加载时不再自动加载所有模型，而是等待用户选择算法类型
+    // 模型将在用户选择智能体时动态加载
 
     return {
       username,
@@ -615,6 +678,8 @@ export default {
       formatTime,
       formatActionTime,
       onGameChange,
+      onAgentChange,
+      loadModelsByAlgorithm,
       handleKeyDown,
       handleKeyUp,
       getModelLabel,
@@ -828,5 +893,10 @@ export default {
 
 .game-settings {
   padding: 0 20px;
+}
+
+.weight-hint {
+  margin-top: 5px;
+  text-align: center;
 }
 </style>

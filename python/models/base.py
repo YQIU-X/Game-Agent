@@ -29,7 +29,7 @@ class BaseModel(ABC, nn.Module):
     
     def load_weights(self, weights_path: str):
         """加载权重"""
-        weights = torch.load(weights_path, map_location='cpu')
+        weights = torch.load(weights_path, map_location='cpu', weights_only=True)
         self.load_state_dict(weights)
         self.eval()
     

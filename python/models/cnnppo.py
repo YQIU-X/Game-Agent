@@ -1,104 +1,116 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
 """
-CNN PPO模型：用于近端策略优化
+CNN PPO模型
+PPO算法的Actor-Critic卷积神经网络实现
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.distributions as distributions
 from .base import BaseModel
 
 
 class CNNPPO(BaseModel):
-    """CNN PPO模型 - 使用ActorCritic架构"""
+    """CNN PPO Actor-Critic模型"""
     
-    def __init__(self, input_shape, num_actions):
+    def __init__(self, input_shape: tuple, num_actions: int, hidden_size: int = 512):
         super().__init__(input_shape, num_actions)
         
-        # 卷积层处理堆叠帧
+        self.hidden_size = hidden_size
+        
+        # 卷积特征提取层 - 匹配权重文件结构
         self.net = nn.Sequential(
-            nn.Conv2d(input_shape[0], 32, 8, 4),
-            nn.ReLU(),
-            nn.Conv2d(32, 64, 4, 2),
-            nn.ReLU(),
-            nn.Conv2d(64, 64, 3, 1),
-            nn.ReLU(),
+            nn.Conv2d(input_shape[0], 32, kernel_size=8, stride=4),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 64, kernel_size=4, stride=2),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1),
+            nn.ReLU(inplace=True)
         )
         
         # 计算特征大小
         self._feature_size = self._get_feature_size()
         
-        # 全连接层用于策略和价值头
-        self.linear = nn.Linear(self._feature_size, 512)
-        self.policy_head = nn.Linear(512, num_actions)
-        self.value_head = nn.Linear(512, 1)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """前向传播 - 返回策略头输出"""
-        # 确保输入维度正确 (batch, channels, height, width)
-        if x.dim() == 3:
-            x = x.unsqueeze(0)  # 添加batch维度
+        # 共享全连接层 - 匹配权重文件结构
+        self.linear = nn.Linear(self._feature_size, hidden_size)
         
-        x = self.net(x)
-        x = x.reshape(x.size(0), -1)
-        x = torch.relu(self.linear(x))
+        # Actor头（策略网络） - 匹配权重文件结构
+        self.policy_head = nn.Linear(hidden_size, num_actions)
         
-        return self.policy_head(x)
-
-    def get_action_probs(self, state_tensor: torch.Tensor) -> torch.Tensor:
-        """获取动作概率分布"""
-        logits = self.forward(state_tensor)
-        return F.softmax(logits, dim=-1)
+        # Critic头（价值网络） - 匹配权重文件结构
+        self.value_head = nn.Linear(hidden_size, 1)
+        
+        # 初始化权重
+        self._init_weights()
     
-    def get_value(self, state_tensor: torch.Tensor) -> torch.Tensor:
-        """获取状态价值"""
-        # 确保输入维度正确
-        if state_tensor.dim() == 3:
-            state_tensor = state_tensor.unsqueeze(0)  # 添加batch维度
-        
-        x = self.net(state_tensor)
-        x = x.reshape(x.size(0), -1)
-        x = torch.relu(self.linear(x))
-        
-        return self.value_head(x).squeeze(-1)
-
-    def act(self, state_tensor: torch.Tensor) -> int:
-        """选择动作"""
-        # 确保输入维度正确
-        if state_tensor.dim() == 3:
-            state_tensor = state_tensor.unsqueeze(0)  # 添加batch维度
-        
-        logits, value = self._forward_with_value(state_tensor)
-        dist = distributions.Categorical(logits=logits)
-        action = dist.sample()
-        return int(action.item())
-
-    def _forward_with_value(self, x: torch.Tensor) -> tuple:
-        """前向传播并返回策略和价值"""
-        # 确保输入维度正确 (batch, channels, height, width)
-        if x.dim() == 3:
-            x = x.unsqueeze(0)  # 添加batch维度
+    def _get_feature_size(self) -> int:
+        """计算特征大小"""
+        x = torch.zeros(1, *self.input_shape)
+        x = self.net(x)
+        return x.view(1, -1).size(1)
+    
+    def _init_weights(self):
+        """初始化权重"""
+        for module in self.modules():
+            if isinstance(module, nn.Conv2d):
+                nn.init.kaiming_normal_(module.weight, mode='fan_out', nonlinearity='relu')
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+            elif isinstance(module, nn.Linear):
+                nn.init.kaiming_normal_(module.weight, mode='fan_out', nonlinearity='relu')
+                nn.init.constant_(module.bias, 0)
+    
+    def forward(self, x: torch.Tensor) -> tuple:
+        """前向传播，返回logits和value"""
+        # 完全按照原始PPO代码的维度处理
+        if x.dim() == 4:
+            x = x.permute(0, 3, 1, 2)  # (batch, height, width, channels) -> (batch, channels, height, width)
+        elif x.dim() == 3:
+            x = x.permute(2, 0, 1).unsqueeze(0)  # (height, width, channels) -> (1, channels, height, width)
         
         x = self.net(x)
-        x = x.reshape(x.size(0), -1)
+        x = x.reshape(x.size(0), -1)  # 展平
         x = torch.relu(self.linear(x))
         
-        return self.policy_head(x), self.value_head(x).squeeze(-1)
-
-    def get_action_logprob_value(self, state_tensor: torch.Tensor) -> tuple:
-        """获取动作、对数概率和价值（用于PPO训练）"""
-        logits, value = self._forward_with_value(state_tensor)
-        dist = distributions.Categorical(logits=logits)
+        logits = self.policy_head(x)
+        value = self.value_head(x)
+        
+        return logits, value.squeeze(-1)
+    
+    def act(self, state: torch.Tensor) -> tuple:
+        """选择动作，返回action, logprob, value"""
+        logits, value = self.forward(state)
+        dist = torch.distributions.Categorical(logits=logits)
         action = dist.sample()
         logprob = dist.log_prob(action)
         return action, logprob, value
-
-    @property
-    def feature_size(self) -> int:
-        return self._feature_size
-
-    def _get_feature_size(self) -> int:
-        """计算特征大小"""
-        x = torch.zeros(1, *self._input_shape)
-        x = self.net(x)
-        return x.view(1, -1).size(1)
+    
+    def get_value(self, state: torch.Tensor) -> torch.Tensor:
+        """获取状态价值"""
+        _, value = self.forward(state)
+        return value
+    
+    def get_action_and_value(self, state: torch.Tensor, action: torch.Tensor = None) -> tuple:
+        """获取动作和价值"""
+        logits, value = self.forward(state)
+        dist = torch.distributions.Categorical(logits=logits)
+        
+        if action is None:
+            action = dist.sample()
+        
+        logprob = dist.log_prob(action)
+        entropy = dist.entropy()
+        
+        return action, logprob, entropy, value
+    
+    def evaluate_actions(self, state: torch.Tensor, actions: torch.Tensor) -> tuple:
+        """评估动作"""
+        logits, value = self.forward(state)
+        dist = torch.distributions.Categorical(logits=logits)
+        
+        logprob = dist.log_prob(actions)
+        entropy = dist.entropy()
+        
+        return logprob, entropy, value

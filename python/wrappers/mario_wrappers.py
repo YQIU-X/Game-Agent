@@ -21,6 +21,8 @@ class FrameDownsample(ObservationWrapper):
         frame = cv2.resize(frame,
                            (self._width, self._height),
                            interpolation=cv2.INTER_AREA)
+        # 确保返回的帧是uint8格式
+        frame = np.clip(frame, 0, 255).astype(np.uint8)
         return frame[:, :, None]
 
 
@@ -52,6 +54,8 @@ class MaxAndSkipEnv(Wrapper):
             if done:
                 break
         max_frame = np.max(np.stack(self._obs_buffer), axis=0)
+        # 确保max_frame是uint8格式
+        max_frame = np.clip(max_frame, 0, 255).astype(np.uint8)
         return max_frame, total_reward, done, info
 
     def reset(self):

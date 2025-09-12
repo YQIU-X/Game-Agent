@@ -41,23 +41,73 @@ class WeightDetector:
     def _detect_pytorch_weights(weights_path: str) -> Dict[str, Any]:
         """检测PyTorch权重文件"""
         # 加载权重
-        weights = torch.load(weights_path, map_location='cpu')
+        weights = torch.load(weights_path, map_location='cpu', weights_only=True)
         
-        # 假设所有模型都是CNNDQN架构，只检测动作空间
-        if isinstance(weights, dict) and 'fc.2.weight' in weights:
-            # 检测输出层大小来确定动作空间
-            output_size = weights['fc.2.weight'].shape[0]
-            if output_size == 7:
-                action_space = 'SIMPLE'
-            elif output_size == 12:
-                action_space = 'COMPLEX'
+        # 检测模型类型和动作空间
+        model_type = 'UNKNOWN'
+        action_space = 'UNKNOWN'
+        
+        if isinstance(weights, dict):
+            # 检测DQN模型 (有fc.2.weight层)
+            if 'fc.2.weight' in weights:
+                model_type = 'CNNDQN'
+                output_size = weights['fc.2.weight'].shape[0]
+                if output_size == 7:
+                    action_space = 'SIMPLE'
+                elif output_size == 12:
+                    action_space = 'COMPLEX'
+                else:
+                    action_space = 'UNKNOWN'
+            
+            # 检测PPO模型 (有policy_head.weight和value_head.weight层)
+            elif 'policy_head.weight' in weights and 'value_head.weight' in weights:
+                model_type = 'CNNPPO'
+                output_size = weights['policy_head.weight'].shape[0]
+                if output_size == 7:
+                    action_space = 'SIMPLE'
+                elif output_size == 12:
+                    action_space = 'COMPLEX'
+                else:
+                    action_space = 'UNKNOWN'
+            
+            # 检测A2C模型 (有actor_head.weight和critic_head.weight层)
+            elif 'actor_head.weight' in weights and 'critic_head.weight' in weights:
+                model_type = 'CNNA2C'
+                output_size = weights['actor_head.weight'].shape[0]
+                if output_size == 7:
+                    action_space = 'SIMPLE'
+                elif output_size == 12:
+                    action_space = 'COMPLEX'
+                else:
+                    action_space = 'UNKNOWN'
+            
+            # 通过文件名推断模型类型
             else:
-                action_space = 'UNKNOWN'
-        else:
-            action_space = 'UNKNOWN'
+                filename = os.path.basename(weights_path).lower()
+                if 'ppo' in filename or 'actor_critic' in filename:
+                    model_type = 'CNNPPO'
+                    # 尝试从文件名推断动作空间
+                    if 'simple' in filename:
+                        action_space = 'SIMPLE'
+                    elif 'complex' in filename:
+                        action_space = 'COMPLEX'
+                    else:
+                        action_space = 'COMPLEX'  # 默认使用COMPLEX
+                elif 'a2c' in filename:
+                    model_type = 'CNNA2C'
+                    if 'simple' in filename:
+                        action_space = 'SIMPLE'
+                    elif 'complex' in filename:
+                        action_space = 'COMPLEX'
+                    else:
+                        action_space = 'COMPLEX'
+                else:
+                    # 默认为DQN
+                    model_type = 'CNNDQN'
+                    action_space = 'COMPLEX'
         
         return {
-            'model_type': 'CNNDQN',
+            'model_type': model_type,
             'action_space': action_space,
             'input_shape': (4, 84, 84),  # 标准输入形状
             'weights_path': weights_path

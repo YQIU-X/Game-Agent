@@ -31,10 +31,10 @@ OUTPUT_SIZE = 12  # complex movement action space
 NUM_EPISODES = 50000
 SAVE_FREQUENCY = 100
 LOG_FREQUENCY = 10
-RENDER = true
-SAVE_MODEL = false
-USE_GPU = true
-VERBOSE = true
+RENDER = False
+SAVE_MODEL = True
+USE_GPU = True
+VERBOSE = True
 
 # 文件路径配置
 CONFIG_DIR = 'configs'
