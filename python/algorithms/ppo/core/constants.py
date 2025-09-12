@@ -128,3 +128,4 @@ def get_model_config():
 def get_log_config():
     """获取日志配置"""
     return LOG_CONFIG.copy()
+
