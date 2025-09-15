@@ -1,0 +1,4 @@
+episode,avg_return,max_stage,flag_get,avg_total_reward,timestamp
+1,-3.096,1,False,0,2025-09-14 21:59:13
+2,3.532,1,False,0,2025-09-14 21:59:13
+3,4.48,1,False,0,2025-09-14 21:59:14

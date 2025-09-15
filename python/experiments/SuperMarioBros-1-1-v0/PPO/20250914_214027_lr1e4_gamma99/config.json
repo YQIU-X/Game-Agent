@@ -1,0 +1,21 @@
+{
+  "environment": "SuperMarioBros-1-1-v0",
+  "action_space": "complex",
+  "algorithm": "PPO",
+  "learning_rate": 0.0001,
+  "gamma": 0.99,
+  "lambda_gae": 0.95,
+  "clip_eps": 0.2,
+  "vf_coef": 0.5,
+  "ent_coef": 0.01,
+  "max_grad_norm": 0.5,
+  "epochs": 1,
+  "minibatch_size": 32,
+  "num_env": 2,
+  "rollout_steps": 32,
+  "force_cpu": false,
+  "log_frequency": 10,
+  "save_frequency": 100,
+  "eval_frequency": 2,
+  "eval_episodes": 5
+}

@@ -1,0 +1,2 @@
+episode,total_reward,best_reward,average_reward,episode_length,total_steps,epsilon,average_loss,learning_rate,gamma,max_stage,flag_get,avg_total_reward,policy_loss,value_loss,entropy,timestamp
+1,151.0,151.0,2.979,1024,1024,0.0,70.409181,0.0001,0.99,1,False,151.0,-0.019857,70.429038,2.465755,2025-09-14 22:21:27

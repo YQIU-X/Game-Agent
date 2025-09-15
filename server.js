@@ -695,7 +695,17 @@ app.post('/api/start-training', (req, res) => {
     'save_frequency': 'save-frequency',
     'log_frequency': 'log-frequency',
     'save_model': 'save-model',
-    'use_gpu': 'force-cpu' // 注意：use_gpu=true时应该不传force-cpu参数
+    'use_gpu': 'force-cpu', // 注意：use_gpu=true时应该不传force-cpu参数
+    // PPO特有参数
+    'lambda_gae': 'lambda-gae',
+    'clip_eps': 'clip-eps',
+    'vf_coef': 'vf-coef',
+    'ent_coef': 'ent-coef',
+    'max_grad_norm': 'max-grad-norm',
+    'epochs': 'epochs',
+    'minibatch_size': 'minibatch-size',
+    'num_env': 'num-env',
+    'rollout_steps': 'rollout-steps'
     // 注意：max_steps_per_episode 和 verbose 参数在 train_dqn.py 中不支持，已移除
   };
 
@@ -964,25 +974,34 @@ app.get('/api/algorithm-configs', (req, res) => {
               precision: 2,
               description: '折扣因子'
             },
-            'clip_ratio': {
+            'lambda_gae': {
+              type: 'float',
+              default: 0.95,
+              min: 0.1,
+              max: 1.0,
+              step: 0.01,
+              precision: 2,
+              description: 'GAE lambda参数'
+            },
+            'clip_eps': {
               type: 'float',
               default: 0.2,
               min: 0.1,
               max: 0.5,
               step: 0.01,
               precision: 2,
-              description: '裁剪比例'
+              description: 'PPO裁剪参数'
             },
-            'value_loss_coef': {
+            'vf_coef': {
               type: 'float',
               default: 0.5,
               min: 0.1,
               max: 1.0,
               step: 0.1,
               precision: 1,
-              description: '价值损失系数'
+              description: '价值函数损失系数'
             },
-            'entropy_coef': {
+            'ent_coef': {
               type: 'float',
               default: 0.01,
               min: 0.001,
@@ -1000,7 +1019,7 @@ app.get('/api/algorithm-configs', (req, res) => {
               precision: 1,
               description: '最大梯度范数'
             },
-            'ppo_epochs': {
+            'epochs': {
               type: 'int',
               default: 4,
               min: 1,
@@ -1008,13 +1027,29 @@ app.get('/api/algorithm-configs', (req, res) => {
               step: 1,
               description: 'PPO更新轮数'
             },
-            'batch_size': {
+            'minibatch_size': {
               type: 'int',
               default: 64,
               min: 16,
               max: 256,
               step: 16,
-              description: '批次大小'
+              description: '小批次大小'
+            },
+            'num_env': {
+              type: 'int',
+              default: 8,
+              min: 1,
+              max: 32,
+              step: 1,
+              description: '并行环境数量'
+            },
+            'rollout_steps': {
+              type: 'int',
+              default: 128,
+              min: 32,
+              max: 512,
+              step: 32,
+              description: 'rollout步数'
             }
           },
           flags: {
@@ -1857,6 +1892,11 @@ app.get('/api/config-manager/:algorithm/:game', (req, res) => {
       wrappers: path.join(__dirname, `python/games/${game.toLowerCase()}/core/wrappers.py`)
     };
     
+    // 为PPO添加专用包装器
+    if (algorithm.toLowerCase() === 'ppo') {
+      gameFiles.ppo_wrappers = path.join(__dirname, `python/wrappers/ppo_wrappers.py`);
+    }
+    
     const result = {
       success: true,
       algorithm: algorithm.toUpperCase(),
@@ -2077,11 +2117,11 @@ app.post('/api/config-manager/create-original-backup', (req, res) => {
       return res.status(400).json({ success: false, message: '缺少必要参数' });
     }
     
-    // 只支持DQN+Mario的原始备份
-    if (algorithm.toLowerCase() !== 'dqn' || game.toLowerCase() !== 'mario') {
+    // 支持DQN+Mario和PPO+Mario的原始备份
+    if ((algorithm.toLowerCase() !== 'dqn' && algorithm.toLowerCase() !== 'ppo') || game.toLowerCase() !== 'mario') {
       return res.status(400).json({ 
         success: false, 
-        message: '目前只支持DQN+Mario的原始备份' 
+        message: '目前只支持DQN+Mario和PPO+Mario的原始备份' 
       });
     }
     
@@ -2111,6 +2151,11 @@ app.post('/api/config-manager/create-original-backup', (req, res) => {
     const gameFiles = {
       wrappers: 'super-mario-bros-dqn/core/wrappers.py'
     };
+    
+    // 为PPO添加专用包装器
+    if (algorithm.toLowerCase() === 'ppo') {
+      gameFiles.ppo_wrappers = 'wrappers/ppo_wrappers.py';
+    }
     
     let copiedFiles = [];
     
@@ -2254,6 +2299,42 @@ app.get('/api/config-manager/backups/:algorithm/:game/:fileType', (req, res) => 
   } catch (error) {
     console.error('获取备份列表失败:', error);
     res.status(500).json({ success: false, message: '获取备份列表失败' });
+  }
+});
+
+// 获取原始备份内容
+app.post('/api/config-manager/backup-original', (req, res) => {
+  try {
+    const { algorithm, game, fileType, category } = req.body;
+    const fs = require('fs');
+    
+    if (!algorithm || !game || !fileType || !category) {
+      return res.status(400).json({ success: false, message: '缺少必要参数' });
+    }
+    
+    // 原始备份路径
+    const originalDir = path.join(__dirname, 'backups', `${algorithm.toUpperCase()}_${game.charAt(0).toUpperCase() + game.slice(1)}_Original`);
+    const originalFilePath = path.join(originalDir, category === 'algorithm' ? 'algorithm' : 'game', `${fileType}.py`);
+    
+    if (!fs.existsSync(originalFilePath)) {
+      return res.status(404).json({ 
+        success: false, 
+        message: '未找到原始备份文件' 
+      });
+    }
+    
+    // 读取原始备份文件内容
+    const content = fs.readFileSync(originalFilePath, 'utf8');
+    
+    res.json({
+      success: true,
+      content: content,
+      filePath: originalFilePath
+    });
+    
+  } catch (error) {
+    console.error('获取原始备份失败:', error);
+    res.status(500).json({ success: false, message: '获取原始备份失败' });
   }
 });
 

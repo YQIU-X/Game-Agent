@@ -447,12 +447,17 @@
                 <h4>选择要显示的指标：</h4>
                 <div class="metrics-checkboxes">
                   <el-checkbox-group v-model="selectedMetrics" @change="updateRealtimeChart">
-                    <el-checkbox label="total_reward">总奖励</el-checkbox>
-                    <el-checkbox label="best_reward">最佳奖励</el-checkbox>
-                    <el-checkbox label="average_reward">平均奖励</el-checkbox>
-                    <el-checkbox label="epsilon">Epsilon值</el-checkbox>
-                    <el-checkbox label="average_loss">平均损失</el-checkbox>
+                    <el-checkbox 
+                      v-for="metric in availableMetricsForCurrentAlgorithm" 
+                      :key="metric.key" 
+                      :label="metric.key"
+                    >
+                      {{ metric.label }}
+                    </el-checkbox>
                   </el-checkbox-group>
+                  <div v-if="availableMetricsForCurrentAlgorithm.length === 0" style="color: red;">
+                    没有可用的指标 (算法: {{ selectedAlgorithm }})
+                  </div>
                 </div>
               </div>
               
@@ -746,6 +751,76 @@ export default {
       { value: 'average_loss', label: '平均损失' }
     ])
     
+    // 根据当前选择的算法动态显示相关指标
+    const availableMetricsForCurrentAlgorithm = computed(() => {
+      // 优先从选择的训练记录文件路径判断算法类型
+      let algorithm = 'dqn' // 默认值
+      
+      if (selectedEnvironment.value) {
+        // 从文件路径中提取算法类型
+        // 格式: SuperMarioBros-1-1-v0/PPO/20250914_221007_lr1e4_gamma99
+        const pathParts = selectedEnvironment.value.split('/')
+        if (pathParts.length >= 2) {
+          const algorithmFromPath = pathParts[1].toLowerCase()
+          if (algorithmFromPath === 'ppo' || algorithmFromPath === 'dqn') {
+            algorithm = algorithmFromPath
+          }
+        }
+      } else {
+        // 如果没有选择训练记录，使用训练控制面板的算法选择
+        algorithm = selectedAlgorithm.value?.toLowerCase() || 'dqn'
+      }
+      
+      console.log('availableMetricsForCurrentAlgorithm: 当前算法:', algorithm)
+      console.log('availableMetricsForCurrentAlgorithm: 选择的训练记录:', selectedEnvironment.value)
+      
+      // 基础指标（所有算法都有）
+      const baseMetrics = [
+        { key: 'total_reward', label: '总奖励' },
+        { key: 'best_reward', label: '最佳奖励' },
+        { key: 'average_reward', label: '平均奖励' },
+        { key: 'average_loss', label: '平均损失' }
+      ]
+      
+      // DQN特有指标
+      const dqnMetrics = [
+        { key: 'epsilon', label: 'Epsilon值' },
+        { key: 'episode_length', label: '回合长度' },
+        { key: 'total_steps', label: '总步数' },
+        { key: 'learning_rate', label: '学习率' },
+        { key: 'gamma', label: '折扣因子' }
+      ]
+      
+      // PPO特有指标
+      const ppoMetrics = [
+        { key: 'episode_length', label: '回合长度' },
+        { key: 'total_steps', label: '总步数' },
+        { key: 'learning_rate', label: '学习率' },
+        { key: 'gamma', label: '折扣因子' },
+        { key: 'max_stage', label: '最大关卡' },
+        { key: 'flag_get', label: '通关标志' },
+        { key: 'avg_total_reward', label: '平均总奖励' },
+        { key: 'policy_loss', label: '策略损失' },
+        { key: 'value_loss', label: '价值损失' },
+        { key: 'entropy', label: '熵值' }
+      ]
+      
+      // 根据算法返回相应的指标
+      let result
+      if (algorithm === 'dqn') {
+        result = [...baseMetrics, ...dqnMetrics]
+      } else if (algorithm === 'ppo') {
+        result = [...baseMetrics, ...ppoMetrics]
+      } else {
+        // 默认返回DQN指标
+        result = [...baseMetrics, ...dqnMetrics]
+      }
+      
+      console.log('availableMetricsForCurrentAlgorithm: 返回指标数量:', result.length)
+      console.log('availableMetricsForCurrentAlgorithm: 指标列表:', result.map(m => m.key))
+      return result
+    })
+    
     // 检查当前文件是否支持重置
     const isResetSupported = computed(() => {
       if (!currentFileInfo.value) return false
@@ -808,7 +883,7 @@ export default {
         console.log('开始初始化训练控制表单...')
         
         // 首先尝试从最新的备份文件加载
-        const res = await fetch('/api/config-manager/dqn/mario')
+        const res = await fetch(`/api/config-manager/${selectedAlgorithm.value.toLowerCase()}/mario`)
         console.log('API调用结果:', res.status, res.ok)
         
         if (res.ok) {
@@ -849,7 +924,7 @@ export default {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              algorithm: 'dqn',
+              algorithm: selectedAlgorithm.value.toLowerCase(),
               game: 'mario',
               fileType: 'constants',
               category: 'algorithm'
@@ -859,7 +934,7 @@ export default {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              algorithm: 'dqn',
+              algorithm: selectedAlgorithm.value.toLowerCase(),
               game: 'mario',
               fileType: 'constants',
               category: 'game'
@@ -952,13 +1027,18 @@ export default {
           algorithmConfigs.value = result.algorithms || {}
           gameConfigs.value = result.games || {}
           
-          // 设置默认值
-          if (Object.keys(algorithmConfigs.value).length > 0) {
+          console.log('loadConfigs: 加载的算法配置:', Object.keys(algorithmConfigs.value))
+          
+          // 设置默认值（只有在没有选择时才设置）
+          if (Object.keys(algorithmConfigs.value).length > 0 && !selectedAlgorithm.value) {
             selectedAlgorithm.value = Object.keys(algorithmConfigs.value)[0]
+            console.log('loadConfigs: 设置默认算法:', selectedAlgorithm.value)
           }
-          if (Object.keys(gameConfigs.value).length > 0) {
+          if (Object.keys(gameConfigs.value).length > 0 && !selectedGame.value) {
             selectedGame.value = Object.keys(gameConfigs.value)[0]
           }
+          
+          console.log('loadConfigs: 最终算法选择:', selectedAlgorithm.value)
           
           // 初始化环境和动作空间
           updateGameConfig()
@@ -1053,7 +1133,7 @@ export default {
                   'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                  algorithm: 'dqn',
+                  algorithm: selectedAlgorithm.value.toLowerCase(),
                   game: 'mario',
                   fileType: file.fileType,
                   category: file.category
@@ -1711,7 +1791,11 @@ export default {
         console.log('ENVIRONMENT值:', parsedParams['ENVIRONMENT'])
         
         // 更新trainingForm中的对应参数
-          const paramMapping = {
+        // 根据当前选择的算法使用不同的参数映射
+        let paramMapping = {}
+        
+        if (selectedAlgorithm.value.toLowerCase() === 'dqn') {
+          paramMapping = {
             'NUM_EPISODES': 'episodes',
             'LEARNING_RATE': 'learning_rate',
             'GAMMA': 'gamma',
@@ -1733,6 +1817,32 @@ export default {
             'DEFAULT_ACTION_SPACE': 'action_space',
             'MAX_STEPS_PER_EPISODE': 'max_steps_per_episode'
           }
+        } else if (selectedAlgorithm.value.toLowerCase() === 'ppo') {
+          paramMapping = {
+            'NUM_EPISODES': 'episodes',
+            'LEARNING_RATE': 'learning_rate',
+            'GAMMA': 'gamma',
+            'LAMBDA_GAE': 'lambda_gae',
+            'CLIP_RATIO': 'clip_eps',  // constants.py使用CLIP_RATIO，训练表单使用clip_eps
+            'VALUE_LOSS_COEF': 'vf_coef',  // constants.py使用VALUE_LOSS_COEF，训练表单使用vf_coef
+            'ENTROPY_COEF': 'ent_coef',  // constants.py使用ENTROPY_COEF，训练表单使用ent_coef
+            'MAX_GRAD_NORM': 'max_grad_norm',
+            'PPO_EPOCHS': 'epochs',  // constants.py使用PPO_EPOCHS，训练表单使用epochs
+            'BATCH_SIZE': 'minibatch_size',  // constants.py使用BATCH_SIZE，训练表单使用minibatch_size
+            'NUM_ENV': 'num_env',
+            'ROLLOUT_STEPS': 'rollout_steps',
+            'SAVE_FREQUENCY': 'save_frequency',
+            'LOG_FREQUENCY': 'log_frequency',
+            'RENDER': 'render',
+            'SAVE_MODEL': 'save_model',
+            'USE_GPU': 'use_gpu',
+            'VERBOSE': 'verbose',
+            // 从game constants.py读取的参数
+            'DEFAULT_ENVIRONMENT': 'environment',
+            'DEFAULT_ACTION_SPACE': 'action_space',
+            'MAX_STEPS_PER_EPISODE': 'max_steps_per_episode'
+          }
+        }
           
           let updatedCount = 0
           let skippedCount = 0
@@ -1828,23 +1938,49 @@ export default {
         }
         
         // 参数映射：从训练表单字段到constants.py中的变量名
-        const algorithmParamMapping = {
-          'episodes': 'NUM_EPISODES',
-          'learning_rate': 'LEARNING_RATE',
-          'gamma': 'GAMMA',
-          'epsilon_start': 'EPSILON_START',
-          'epsilon_final': 'EPSILON_FINAL',
-          'epsilon_decay': 'EPSILON_DECAY',
-          'batch_size': 'BATCH_SIZE',
-          'memory_capacity': 'MEMORY_CAPACITY',
-          'target_update_frequency': 'TARGET_UPDATE_FREQUENCY',
-          'initial_learning': 'INITIAL_LEARNING',
-          'beta_start': 'BETA_START',
-          'beta_frames': 'BETA_FRAMES',
-          'render': 'RENDER',
-          'save_model': 'SAVE_MODEL',
-          'use_gpu': 'USE_GPU',
-          'verbose': 'VERBOSE'
+        // 根据当前选择的算法使用不同的参数映射
+        let algorithmParamMapping = {}
+        
+        if (selectedAlgorithm.value.toLowerCase() === 'dqn') {
+          algorithmParamMapping = {
+            'episodes': 'NUM_EPISODES',
+            'learning_rate': 'LEARNING_RATE',
+            'gamma': 'GAMMA',
+            'epsilon_start': 'EPSILON_START',
+            'epsilon_final': 'EPSILON_FINAL',
+            'epsilon_decay': 'EPSILON_DECAY',
+            'batch_size': 'BATCH_SIZE',
+            'memory_capacity': 'MEMORY_CAPACITY',
+            'target_update_frequency': 'TARGET_UPDATE_FREQUENCY',
+            'initial_learning': 'INITIAL_LEARNING',
+            'beta_start': 'BETA_START',
+            'beta_frames': 'BETA_FRAMES',
+            'render': 'RENDER',
+            'save_model': 'SAVE_MODEL',
+            'use_gpu': 'USE_GPU',
+            'verbose': 'VERBOSE'
+          }
+        } else if (selectedAlgorithm.value.toLowerCase() === 'ppo') {
+          algorithmParamMapping = {
+            'episodes': 'NUM_EPISODES',
+            'learning_rate': 'LEARNING_RATE',
+            'gamma': 'GAMMA',
+            'lambda_gae': 'LAMBDA_GAE',
+            'clip_eps': 'CLIP_RATIO',  // 训练表单使用clip_eps，constants.py使用CLIP_RATIO
+            'vf_coef': 'VALUE_LOSS_COEF',  // 训练表单使用vf_coef，constants.py使用VALUE_LOSS_COEF
+            'ent_coef': 'ENTROPY_COEF',  // 训练表单使用ent_coef，constants.py使用ENTROPY_COEF
+            'max_grad_norm': 'MAX_GRAD_NORM',
+            'epochs': 'PPO_EPOCHS',  // 训练表单使用epochs，constants.py使用PPO_EPOCHS
+            'minibatch_size': 'BATCH_SIZE',  // 训练表单使用minibatch_size，constants.py使用BATCH_SIZE
+            'num_env': 'NUM_ENV',
+            'rollout_steps': 'ROLLOUT_STEPS',
+            'save_frequency': 'SAVE_FREQUENCY',
+            'log_frequency': 'LOG_FREQUENCY',
+            'render': 'RENDER',
+            'save_model': 'SAVE_MODEL',
+            'use_gpu': 'USE_GPU',
+            'verbose': 'VERBOSE'
+          }
         }
         
         const gameParamMapping = {
@@ -1966,6 +2102,27 @@ export default {
         }
         
         ElMessage.success('参数同步完成')
+        
+        // 重新加载constants.py文件内容
+        console.log('重新加载constants.py文件内容...')
+        
+        // 确保configFiles已加载
+        if (configFiles.value.length === 0) {
+          await loadAllConfigs()
+        }
+        
+        // 找到constants文件并重新加载
+        const reloadConstantsFile = configFiles.value.find(file => 
+          file.type === 'constants' && file.category === 'algorithm'
+        )
+        
+        if (reloadConstantsFile) {
+          await loadFileContent(reloadConstantsFile)
+          console.log('constants.py文件内容已重新加载')
+        } else {
+          console.warn('未找到constants文件，无法重新加载')
+        }
+        
       } catch (error) {
         console.error('同步参数到constants.py失败:', error)
       }
@@ -2474,10 +2631,20 @@ export default {
     const getMetricLabel = (metricKey) => {
       const labels = {
         'total_reward': '总奖励',
-        'best_reward': '最佳奖励',
+        'best_reward': '最佳奖励', 
         'average_reward': '平均奖励',
         'epsilon': 'Epsilon值',
-        'average_loss': '平均损失'
+        'average_loss': '平均损失',
+        'episode_length': '回合长度',
+        'total_steps': '总步数',
+        'learning_rate': '学习率',
+        'gamma': '折扣因子',
+        'max_stage': '最大关卡',
+        'flag_get': '通关标志',
+        'avg_total_reward': '平均总奖励',
+        'policy_loss': '策略损失',
+        'value_loss': '价值损失',
+        'entropy': '熵值'
       }
       return labels[metricKey] || metricKey
     }
@@ -2541,6 +2708,19 @@ export default {
     // 监听选中指标变化
     watch(selectedMetrics, () => {
       updateRealtimeChart()
+    })
+    
+    // 监听算法变化，自动更新选中的指标
+    watch(selectedAlgorithm, () => {
+      // 当算法改变时，重置选中的指标为默认的基础指标
+      selectedMetrics.value = ['total_reward', 'best_reward']
+    })
+    
+    // 监听选择的训练记录变化，自动更新指标选择
+    watch(selectedEnvironment, (newEnvironment) => {
+      console.log('selectedEnvironment changed:', newEnvironment)
+      // 当训练记录改变时，重置选中的指标为默认的基础指标
+      selectedMetrics.value = ['total_reward', 'best_reward']
     })
     
     // 监听图表类型变化
@@ -2797,6 +2977,7 @@ export default {
       showAddChartDialog,
       newChart,
       availableMetricsForChart,
+      availableMetricsForCurrentAlgorithm,
       loadAvailableMetricsFiles,
       loadMetricsData,
       addChart,
