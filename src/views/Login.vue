@@ -38,6 +38,11 @@
             <el-radio label="developer">开发者</el-radio>
             <el-radio label="player">玩家</el-radio>
           </el-radio-group>
+          <div class="role-hint">
+            <el-text type="info" size="small">
+              统一账户系统：任何用户都可以选择角色，但开发者功能需要相应权限
+            </el-text>
+          </div>
         </el-form-item>
         
         <el-form-item>
@@ -106,13 +111,16 @@ export default {
       if (username && password) {
         loginForm.username = username
         loginForm.password = password
-        loginForm.role = role
-        loginForm.rememberMe = true
+        loginForm.role = role || 'player'
+        loginForm.rememberMe = localStorage.getItem('rememberMe') === 'true'
         
         // 如果之前设置了自动登录，则自动登录
         if (localStorage.getItem('autoLogin') === 'true') {
           loginForm.autoLogin = true
-          handleLogin()
+          // 延迟一点时间再自动登录，确保UI已经渲染完成
+          setTimeout(() => {
+            handleLogin()
+          }, 500)
         }
       }
     })
@@ -135,7 +143,11 @@ export default {
             })
             
             // 保存自动登录设置
-            localStorage.setItem('autoLogin', loginForm.autoLogin)
+            if (loginForm.autoLogin) {
+              localStorage.setItem('autoLogin', 'true')
+            } else {
+              localStorage.removeItem('autoLogin')
+            }
             
             // 登录成功后跳转到对应角色的页面
             const redirectPath = loginForm.role === 'developer' ? '/developer' : '/player'
@@ -144,6 +156,8 @@ export default {
             ElMessage.success('登录成功')
           } catch (error) {
             ElMessage.error('登录失败: ' + error.message)
+            // 登录失败时清除自动登录设置
+            localStorage.removeItem('autoLogin')
           } finally {
             loading.value = false
           }
@@ -199,5 +213,10 @@ export default {
 
 .password-icon {
   cursor: pointer;
+}
+
+.role-hint {
+  margin-top: 8px;
+  text-align: center;
 }
 </style>

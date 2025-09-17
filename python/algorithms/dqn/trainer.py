@@ -225,9 +225,11 @@ class DQNTrainer:
         Returns:
             episode_reward: episode总奖励
             episode_length: episode长度
+            flag_get: 是否通关
         """
         episode_reward = 0.0
         episode_length = 0
+        flag_get = False
         state = self.env.reset()
         
         while True:
@@ -259,6 +261,10 @@ class DQNTrainer:
             # 执行动作
             next_state, reward, done, info = self.env.step(action)
             
+            # 检查是否通关
+            if info.get('flag_get', False):
+                flag_get = True
+            
             # 使用原始奖励记录episode总分
             episode_reward += reward
             
@@ -277,7 +283,7 @@ class DQNTrainer:
             if done:
                 break
         
-        return episode_reward, episode_length
+        return episode_reward, episode_length, flag_get
     
     def train(self, num_episodes, render=False, save_path=None):
         """
@@ -309,7 +315,7 @@ class DQNTrainer:
             self.episode_losses.clear()
             
             # 运行episode
-            episode_reward, episode_length = self.run_episode(render)
+            episode_reward, episode_length, flag_get = self.run_episode(render)
             
             # 记录奖励
             self.episode_rewards.append(episode_reward)
@@ -364,6 +370,28 @@ class DQNTrainer:
                     self.model.state_dict()
                 )
                 print(f"[DQN Training] Best model saved to: {best_model_path}", flush=True)
+            
+            # 保存通关模型
+            if flag_get and self.weights_dir:
+                clear_model_path = experiment_manager.save_model(
+                    self.experiment_dir, f"clear_stage_episode_{episode}", 
+                    self.model.state_dict()
+                )
+                print(f"[DQN Training] Stage cleared! Model saved to: {clear_model_path}", flush=True)
+                
+                # 更新实验元数据，标记为通关
+                experiment_manager.update_metadata(self.experiment_dir, {
+                    "training_info": {
+                        "final_update": "completed",
+                        "best_reward": "stage_cleared",
+                        "stage_cleared": True,
+                        "clear_episode": episode
+                    }
+                })
+                
+                # 通关后可以选择继续训练或停止
+                print(f"[DQN Training] Stage cleared at episode {episode}! Training completed.", flush=True)
+                break
         
         print("[DQN Training] Training completed!", flush=True)
         print(f"[DQN Training] Training metrics saved to: {self.csv_filename}", flush=True)

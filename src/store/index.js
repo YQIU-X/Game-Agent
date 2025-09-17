@@ -5,6 +5,7 @@ export default createStore({
     isAuthenticated: localStorage.getItem('isAuthenticated') === 'true',
     userRole: localStorage.getItem('userRole') || '',
     username: localStorage.getItem('username') || '',
+    userPermissions: JSON.parse(localStorage.getItem('userPermissions') || '{}'),
     // 开发者相关状态
     configFile: null,
     trainingLogs: [],
@@ -18,25 +19,30 @@ export default createStore({
     agentActions: []
   },
   mutations: {
-    setAuthentication(state, { isAuthenticated, username, role }) {
+    setAuthentication(state, { isAuthenticated, username, role, permissions }) {
       state.isAuthenticated = isAuthenticated
       state.username = username
       state.userRole = role
+      state.userPermissions = permissions || {}
       
       // 保存到本地存储
       localStorage.setItem('isAuthenticated', isAuthenticated)
       localStorage.setItem('username', username)
       localStorage.setItem('userRole', role)
+      localStorage.setItem('userPermissions', JSON.stringify(permissions || {}))
     },
     logout(state) {
       state.isAuthenticated = false
       state.username = ''
       state.userRole = ''
+      state.userPermissions = {}
       
       // 清除本地存储
       localStorage.removeItem('isAuthenticated')
       localStorage.removeItem('username')
       localStorage.removeItem('userRole')
+      localStorage.removeItem('userPermissions')
+      // 注意：不清除记住的密码，让用户下次可以选择是否记住
     },
     // 开发者相关mutations
     setConfigFile(state, configFile) {
@@ -86,20 +92,33 @@ export default createStore({
         throw new Error((data && data.message) || '登录失败')
       }
       const serverUser = data.user || { username, role }
+      // 统一账户系统：develop和player使用同一个账户，根据选择的角色决定访问权限
       const finalRole = role || serverUser.role || 'player'
+      
+      // 提取权限信息
+      const permissions = {
+        canAccessDeveloper: serverUser.canAccessDeveloper || false,
+        canAccessPlayer: serverUser.canAccessPlayer || true
+      }
+      
       commit('setAuthentication', { 
         isAuthenticated: true, 
         username: serverUser.username || username, 
-        role: finalRole 
+        role: finalRole,
+        permissions: permissions
       })
+      
+      // 记住密码功能
       if (rememberMe) {
         localStorage.setItem('rememberedUsername', username)
         localStorage.setItem('rememberedPassword', password)
         localStorage.setItem('rememberedRole', finalRole)
+        localStorage.setItem('rememberMe', 'true')
       } else {
         localStorage.removeItem('rememberedUsername')
         localStorage.removeItem('rememberedPassword')
         localStorage.removeItem('rememberedRole')
+        localStorage.removeItem('rememberMe')
       }
       return true
     },
@@ -149,6 +168,9 @@ export default createStore({
     isAuthenticated: state => state.isAuthenticated,
     userRole: state => state.userRole,
     username: state => state.username,
+    userPermissions: state => state.userPermissions,
+    canAccessDeveloper: state => state.userPermissions.canAccessDeveloper || false,
+    canAccessPlayer: state => state.userPermissions.canAccessPlayer || true,
     rememberedCredentials: () => ({
       username: localStorage.getItem('rememberedUsername') || '',
       password: localStorage.getItem('rememberedPassword') || '',
