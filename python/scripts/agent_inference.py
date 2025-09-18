@@ -79,7 +79,7 @@ def main():
     parser = argparse.ArgumentParser(description='通用游戏推理脚本')
     parser.add_argument('--env', type=str, required=True, help='游戏环境名称')
     parser.add_argument('--weights', type=str, required=True, help='权重文件路径')
-    parser.add_argument('--fps', type=int, default=10, help='帧率')
+    parser.add_argument('--fps', type=int, default=5, help='帧率')
     parser.add_argument('--device', type=str, default='cpu', help='设备 (cpu/cuda)')
     parser.add_argument('--algorithm', type=str, help='算法类型 (dqn, ppo, a2c)')
     
@@ -369,7 +369,7 @@ def main():
             start_time = time.time()
             
             # 完全按照你的代码逻辑：直接使用环境包装器处理后的观察
-            state_v = torch.tensor(np.array([state], copy=False))
+            state_v = torch.tensor(np.array([state], copy=True))
             state_v = state_v.to(device)
             
             # 模型推理
@@ -403,19 +403,20 @@ def main():
             total_reward += reward
             
             # 渲染帧用于显示
-            frame = env.unwrapped.screen
-            print(f"[DEBUG] Frame shape: {frame.shape}, dtype: {frame.dtype}, min: {frame.min()}, max: {frame.max()}", file=sys.stderr)
+            frame = env.render(mode='rgb_array')
             frame_base64 = frame_to_base64(frame)
             
             # 输出JSON
+            current_time = time.time()
             output = {
                 "type": "frame",
                 "t": frame_count,
+                "timestamp": current_time,
                 "agent_action": action_name,
                 "reward": float(reward),
                 "frame": frame_base64
             }
-            print(json.dumps(output, ensure_ascii=False))
+            print(json.dumps(output, ensure_ascii=False), flush=True)
             
             # 检查是否获得旗帜
             if info.get('flag_get', False):

@@ -429,7 +429,7 @@ export default {
           
           // 启动玩家
           const { startPlayerApi } = await import('../api')
-          const playerPayload = { level: selectedLevel.value, actionSpace: 'SIMPLE', fps: 30 }
+          const playerPayload = { level: selectedLevel.value, actionSpace: 'SIMPLE', fps: 8 }
           const playerResponse = await startPlayerApi(playerPayload)
           
           if (playerResponse.data && playerResponse.data.success) {
@@ -560,9 +560,9 @@ export default {
       window.removeEventListener('keyup', handleKeyUp)
     })
     
-    // 初始化：仅一个游戏(super-mario-bros)，关卡1-1至3-3，智能体支持dqn和ppo
+    // 初始化：仅一个游戏(super-mario-bros)，关卡1-1至3-4，智能体支持dqn和ppo
     availableGames.value = [{ id: 'super-mario-bros', name: '超级马里奥' }]
-    const levelIds = ['1-1','1-2','1-3','1-4','2-1','2-2','2-3','2-4','3-1','3-2','3-3']
+    const levelIds = ['1-1','1-2','1-3','1-4','2-1','2-2','2-3','2-4','3-1','3-2','3-3','3-4']
     availableLevels.value = levelIds.map(v => ({ id: `SuperMarioBros-${v}-v0`, name: `关卡 ${v}` }))
     availableAgents.value = [
       { id: 'dqn', name: 'DQN 智能体' },

@@ -8,7 +8,11 @@ import numpy as np
 from collections import deque
 import gym
 from gym import spaces
-from gym.wrappers import Monitor
+# 兼容性修复：gym 0.26.2中没有Monitor，使用RecordVideo替代
+try:
+    from gym.wrappers import Monitor
+except ImportError:
+    from gym.wrappers import RecordVideo as Monitor
 import gym_super_mario_bros
 from nes_py.wrappers import JoypadSpace
 from gym_super_mario_bros.actions import COMPLEX_MOVEMENT

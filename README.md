@@ -1,4 +1,172 @@
-# 游戏代理平台 - 智能训练实验管理系统
+## 🎮 项目演示
+
+### 平台功能演示
+#### 玩家端
+<video src="static/player.mp4" controls muted autoplay loop></video>
+
+
+##### 开发者端
+<video src="static/developer.mp4" controls muted autoplay loop></video>
+
+*平台界面和功能演示 - 开发者模式*
+
+### 智能体游戏演示
+
+The following table shows the current progress of the model on various levels
+and the settings used to achieve the indicated performance:
+
+| Level | Status | Actions | DQN | PPO |
+|:---|:---|:---|:---|:---|
+| **World 1-1** | Optimal | Complex | ![][1-1] | N/A |
+| **World 1-2** | Optimal | Simple | ![][1-2] | N/A |
+| **World 1-3** | Optimal | Simple | ![][1-3] | N/A |
+| **World 1-4** | Optimal | Simple | ![][1-4] | N/A |
+| **World 2-1** | Untested | N/A | N/A | N/A |
+| **World 2-2** | Untested | N/A | N/A | N/A |
+| **World 2-3** | Optimal | Simple | ![][2-3] | N/A |
+| **World 2-4** | Optimal | Simple | ![][2-4] | N/A |
+| **World 3-1** | Untested | N/A | N/A | N/A |
+| **World 3-2** | Optimal | Simple | ![][3-2] | N/A |
+| **World 3-3** | Untested | N/A | N/A | ![][3-3PPO] |
+| **World 3-4** | Optimal | Simple | ![][3-4] | ![][3-4PPO] |
+| **World 4-1** | Untested | N/A | N/A | N/A |
+| **World 4-2** | Untested | N/A | N/A | N/A |
+| **World 4-3** | Optimal | Simple | ![][4-3] | N/A |
+| **World 4-4** | Untested | N/A | N/A | N/A |
+| **World 5-1** | Untested | N/A | N/A | N/A |
+| **World 5-2** | Untested | N/A | N/A | N/A |
+| **World 5-3** | Untested | N/A | N/A | N/A |
+| **World 5-4** | Optimal | Simple | ![][5-4] | N/A |
+| **World 6-1** | Optimal | Simple | ![][6-1] | N/A |
+| **World 6-2** | Untested | N/A | N/A | N/A |
+| **World 6-3** | Untested | N/A | N/A | N/A |
+| **World 6-4** | Optimal | Simple | ![][6-4] | N/A |
+| **World 7-1** | Untested | N/A | N/A | N/A |
+| **World 7-2** | Untested | N/A | N/A | N/A |
+| **World 7-3** | Optimal | Simple | ![][7-3] | N/A |
+
+[1-1]: static/smb-1-1-complete.gif
+[1-2]: static/smb-1-2-complete.gif
+[1-3]: static/smb-1-3-complete.gif
+[1-4]: static/smb-1-4-complete.gif
+[2-3]: static/smb-2-3-complete.gif
+[2-4]: static/smb-2-4-complete.gif
+[3-2]: static/smb-3-2-complete.gif
+[3-4]: static/smb-3-4-complete.gif
+[4-3]: static/smb-4-3-complete.gif
+[5-4]: static/smb-5-4-complete.gif
+[6-1]: static/smb-6-1-complete.gif
+[6-4]: static/smb-6-4-complete.gif
+[7-3]: static/smb-7-3-complete.gif
+[3-3PPO]: static\PPO-3-3.gif
+[3-4PPO]: static\PPO-3-4.gif
+
+### 部分智能体训练日志
+
+
+
+## 📖 项目介绍
+
+### 🎯 项目概述
+游戏代理平台是一个基于强化学习的智能游戏训练实验管理系统，旨在为研究人员和开发者提供一个完整的游戏AI训练、测试和部署平台。平台支持多种强化学习算法（DQN、PPO、A2C等）和游戏环境（Super Mario Bros、Atari等），提供可视化的训练过程监控和智能体性能评估。
+
+### 🚀 核心功能
+- **智能实验管理**: 自动组织和管理训练实验，支持超参数对比和结果分析
+- **多算法支持**: 集成DQN、PPO、A2C等主流强化学习算法
+- **多环境兼容**: 支持Super Mario Bros、Atari等多种游戏环境
+- **可视化界面**: 提供Web界面进行训练监控、模型管理和智能体测试
+- **模型推理**: 支持训练好的模型进行游戏推理和性能评估
+- **实验对比**: 自动记录训练指标，支持不同实验结果的对比分析
+
+### 🎨 技术特色
+- **模块化设计**: 采用模块化架构，易于扩展新算法和游戏环境
+- **智能文件管理**: 自动检测和组织模型文件，支持新旧格式兼容
+- **实时监控**: 训练过程中实时显示损失、奖励等关键指标
+- **用户友好**: 提供开发者模式和玩家模式，满足不同用户需求
+
+
+## 环境介绍
+
+### Action spaces
+This repository allows users to specify a custom set of actions that Mario can
+use with various degrees of complexity. Choosing a simpler action space makes it
+quicker and easier for Mario to learn, but prevents him from trying more complex
+movements which can include entering pipes and making advanced jumps which might
+be required to solve some levels. If Mario appears to struggle with a particular
+level, try simplifying the action space to see if he makes further progress.
+
+Currently, the following options are supported:
+
+#### Right only
+Mario can effectively only go right. This simplifies the training process, but
+prevents Mario from trying more complex actions. The following buttons are
+supported:
+  * Nothing
+  * Right
+  * Right + A
+  * Right + B
+  * Right + A + B
+
+#### Simple movement
+In addition to moving right and running/jumping, Mario can now walk left and
+jump in place. The following buttons are supported:
+  * Nothing
+  * Right
+  * Right + A
+  * Right + B
+  * Right + A + B
+  * A
+  * Left
+
+#### Complex movement
+This action allows Mario to try nearly any of his possible actions from the
+game. This option should be chosen by default for the most realistic exploration
+of a level, but can increase the time and complexity of learning a level. This
+is the only provided action space that allows Mario to enter vertically-oriented
+pipes. The following buttons are supported:
+  * Nothing
+  * Right
+  * Right + A
+  * Right + B
+  * Right + A + B
+  * A
+  * Left
+  * Left + A
+  * Left + B
+  * Left + A + B
+  * Down
+  * Up
+
+
+#### Version
+The version of the environment that was tested. See the Environments section of
+[gym-super-mario-bros' README](https://github.com/Kautenja/gym-super-mario-bros/blob/master/README.md#environments)
+for examples of the various environment versions.
+
+#### Status
+The current status of training for the indicated level. The status can take on
+the following values:
+  * **Untested**: No attempts or progress has been made on training for the
+given level yet.
+  * **Training**: Training has begun for the indicated level, but Mario has not
+yet completed the level. If a model is provided, it will correspond to the most
+recent training pass achieved, and not necessarily the best run so far.
+  * **Satisfactory**: Mario can successfully complete the level, but is
+currently unable to do so in an optimal manner for any reason, including
+standing in place, losing health, not making forward progress, or others.
+  * **Optimal**: Mario has trained enough that he can beat the level at
+near-optimal performance. This does not necessarily mean the run is perfect, but
+he can complete the level with only a couple minor interruptions at most. In
+this state, further progress will likely not be made.
+
+#### Actions
+The action-space that Mario has been trained to use. See "Action spaces" above
+for more details on the various action spaces.
+
+#### GIF
+An animated GIF of the run that corresponds to the saved model provided in the
+repository.
+
 
 ## 📚 参考项目
 
@@ -9,6 +177,21 @@
 
 感谢这些项目的开源贡献，为我们的游戏代理平台提供了重要的技术基础。
 
+
+## 环境
+```bash
+conda create -n [env name] python=3.8
+conda activate [env name]
+pip install -r requirement.txt
+```
+
+## 启动
+```bash
+conda activate [env name]
+npm install concurrently --save-dev
+npm run dev
+```
+
 ## 登录
 ```javascript
 // 模拟用户数据
@@ -18,12 +201,7 @@ const users = [
 ];
 ```
 
-## 环境
-```bash
-conda create -n [env name] python=3.8
-conda activate [env name]
-pip install -r requirement.txt
-```
+
 
 
 ## ✨ 核心特性

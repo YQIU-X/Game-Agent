@@ -1,0 +1,28 @@
+{
+  "environment": "SuperMarioBros-1-1-v0",
+  "algorithm": "PPO",
+  "session_id": "20250918_170627_lr1e4_gamma99",
+  "created_at": "2025-09-18T17:06:27.708235",
+  "status": "running",
+  "config": {
+    "environment": "SuperMarioBros-1-1-v0",
+    "action_space": "complex",
+    "algorithm": "PPO",
+    "learning_rate": 0.0001,
+    "gamma": 0.99,
+    "lambda_gae": 0.95,
+    "clip_eps": 0.2,
+    "vf_coef": 0.5,
+    "ent_coef": 0.01,
+    "max_grad_norm": 0.5,
+    "epochs": 4,
+    "minibatch_size": 64,
+    "num_env": 8,
+    "rollout_steps": 128,
+    "force_cpu": false,
+    "log_frequency": 10,
+    "save_frequency": 100,
+    "eval_frequency": 50,
+    "eval_episodes": 5
+  }
+}

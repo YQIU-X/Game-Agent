@@ -17,7 +17,8 @@ MARIO_ENVIRONMENTS = [
     'SuperMarioBros-2-4-v0',
     'SuperMarioBros-3-1-v0',
     'SuperMarioBros-3-2-v0',
-    'SuperMarioBros-3-3-v0'
+    'SuperMarioBros-3-3-v0',
+    'SuperMarioBros-3-4-v0'
 ]
 
 # 默认环境

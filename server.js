@@ -174,7 +174,8 @@ app.get('/api/levels', async (req, res) => {
     const levels = [
       { id: 'SuperMarioBros-1-1-v0', name: '关卡1-1' },
       { id: 'SuperMarioBros-1-2-v0', name: '关卡1-2' },
-      { id: 'SuperMarioBros-1-3-v0', name: '关卡1-3' }
+      { id: 'SuperMarioBros-1-3-v0', name: '关卡1-3' },
+      { id: 'SuperMarioBros-3-4-v0', name: '关卡3-4' }
     ];
     res.json({ success: true, levels });
   }
@@ -1080,7 +1081,8 @@ app.get('/api/algorithm-configs', (req, res) => {
             'SuperMarioBros-2-4-v0',
             'SuperMarioBros-3-1-v0',
             'SuperMarioBros-3-2-v0',
-            'SuperMarioBros-3-3-v0'
+            'SuperMarioBros-3-3-v0',
+            'SuperMarioBros-3-4-v0'
           ],
           action_spaces: {
             'simple': 'SIMPLE_MOVEMENT',

@@ -86,8 +86,9 @@ def main():
     parser = argparse.ArgumentParser(description='PPO专用推理脚本')
     parser.add_argument('--env', type=str, required=True, help='游戏环境名称')
     parser.add_argument('--weights', type=str, required=True, help='权重文件路径')
-    parser.add_argument('--fps', type=int, default=10, help='帧率')
+    parser.add_argument('--fps', type=int, default=5, help='帧率')
     parser.add_argument('--device', type=str, default='cpu', help='设备 (cpu/cuda)')
+    parser.add_argument('--algorithm', type=str, help='算法类型 (兼容参数，PPO专用脚本)')
     
     args = parser.parse_args()
     
@@ -142,7 +143,7 @@ def main():
             start_time = time.time()
             
             # PPO推理逻辑
-            state_v = torch.tensor(np.array([state], copy=False), dtype=torch.float32).to(device)
+            state_v = torch.tensor(np.array([state], copy=True), dtype=torch.float32).to(device)
             
             with torch.no_grad():
                 logits, value = model(state_v)
@@ -169,18 +170,20 @@ def main():
             total_reward += reward
             
             # 渲染帧用于显示
-            frame = env.unwrapped.screen
+            frame = env.render(mode='rgb_array')
             frame_base64 = frame_to_base64(frame)
             
             # 输出JSON
+            current_time = time.time()
             output = {
                 "type": "frame",
                 "t": frame_count,
+                "timestamp": current_time,
                 "agent_action": action_name,
                 "reward": float(reward),
                 "frame": frame_base64
             }
-            print(json.dumps(output, ensure_ascii=False))
+            print(json.dumps(output, ensure_ascii=False), flush=True)
             
             # 检查是否获得旗帜
             if info.get('flag_get', False):

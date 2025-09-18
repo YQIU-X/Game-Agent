@@ -44,7 +44,7 @@ def main():
     parser = argparse.ArgumentParser(description='玩家控制脚本')
     parser.add_argument('--env', type=str, required=True, help='游戏环境名称')
     parser.add_argument('--action-space', type=str, default='SIMPLE', help='动作空间类型 (SIMPLE/COMPLEX)')
-    parser.add_argument('--fps', type=int, default=30, help='帧率')
+    parser.add_argument('--fps', type=int, default=8, help='帧率')
     
     args = parser.parse_args()
     
