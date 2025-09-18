@@ -168,14 +168,6 @@ An animated GIF of the run that corresponds to the saved model provided in the
 repository.
 
 
-## 📚 参考项目
-
-本项目基于以下优秀的开源项目构建：
-
-- **[Super Mario Bros DQN](https://github.com/roclark/super-mario-bros-dqn)** - 使用PyTorch训练的DQN模型来通关超级马里奥兄弟
-- **[Super Mario RL](https://github.com/jiseongHAN/Super-Mario-RL)** - 基于强化学习的超级马里奥游戏代理
-
-感谢这些项目的开源贡献，为我们的游戏代理平台提供了重要的技术基础。
 
 
 ## 环境
@@ -427,3 +419,12 @@ experiment_manager.cleanup_old_experiments(keep_count=10)
 - [ ] 实现分布式训练支持
 - [ ] 添加模型性能评估工具
 - [ ] 支持超参数自动调优
+
+## 📚 参考项目
+
+本项目基于以下优秀的开源项目构建：
+
+- **[Super Mario Bros DQN](https://github.com/roclark/super-mario-bros-dqn)** - 使用PyTorch训练的DQN模型来通关超级马里奥兄弟
+- **[Super Mario RL](https://github.com/jiseongHAN/Super-Mario-RL)** - 基于强化学习的超级马里奥游戏代理
+
+感谢这些项目的开源贡献，为我们的游戏代理平台提供了重要的技术基础。
