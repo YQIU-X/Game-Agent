@@ -2,11 +2,11 @@
 
 ### 平台功能演示
 #### 玩家端
-<video src="static/player.mp4" controls muted autoplay loop></video>
+[演示视频](https://1drv.ms/f/c/3cefd1e3f33d2c7f/Ep28s_Q_3fdAhqZ1D2xhTckBtiGj9f5xpweP9503UcDp6A?e=gHI5IC)
 
 
 ##### 开发者端
-<video src="static/developer.mp4" controls muted autoplay loop></video>
+[演示视频](https://1drv.ms/f/c/3cefd1e3f33d2c7f/Ep28s_Q_3fdAhqZ1D2xhTckBtiGj9f5xpweP9503UcDp6A?e=gHI5IC)
 
 *平台界面和功能演示 - 开发者模式*
 
