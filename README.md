@@ -58,8 +58,8 @@ and the settings used to achieve the indicated performance:
 [6-1]: static/smb-6-1-complete.gif
 [6-4]: static/smb-6-4-complete.gif
 [7-3]: static/smb-7-3-complete.gif
-[3-3PPO]: static\PPO-3-3.gif
-[3-4PPO]: static\PPO-3-4.gif
+[3-3PPO]: static/PPO-3-3.gif
+[3-4PPO]: static/PPO-3-4.gif
 
 ### 部分智能体训练日志
 
